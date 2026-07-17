@@ -1,28 +1,25 @@
-# 2.10 Custom Hooks
+# 2.10 Coaching Session: Guarding the Guess Game with React Router and AuthContext
 
-## Lesson Overview
+## Session Overview
 
-This lesson completes the "correct, fast, clean" arc from Lesson 2.9 by teaching learners how to extract stateful logic from component bodies into custom hooks. Rather than adding to the CRM, learners work with a purpose-built `hooks-demo` app that has three panels in a deliberately messy starting state: an authentication panel that reads from React Context directly, a search panel with debounce logic written inline, and a data panel with an async fetch that contains a subtle stale-data bug. Learners refactor each panel in sequence — first building `useAuth` to encapsulate context access with an error guard, then `useDebounce` to extract the timing pattern so it can be reused without duplication, and finally `useDataLoader` to fix the stale-data bug by adding an `ignore` flag cleanup and then pulling the entire fetch pattern into a single reusable hook. The lesson closes with a brief conceptual overview of React Query, explaining how it extends the mental model learners built with `useDataLoader`.
+This coaching session gives learners hands-on practice adding React Router and an authentication gate to a codebase they already know. The session opens with an instructor-led recap of Coaching 2.7 and Lesson 2.8 (see the recap slides in the instructor materials). Learners then spend approximately two hours working through a structured activity using the finished `guess-game` project from Coaching 2.7: creating a separate `AuthContext`, introducing a public `/login` route and a `/game` route, locking `/game` behind a `ProtectedRoute` guard, adding a logout flow, and adding a catch-all 404 page. The session closes with two learner presentations and an instructor walkthrough.
 
 ## Dependencies
 
-- [Lesson](./lesson.md)
+- [Activity Brief](./lesson.md)
+- [Starter Project](./guess-game)
 
-## Lesson Objectives
+## Session Objectives
 
-- Extract stateful logic from components into custom hooks to separate concerns and enable reuse
-- Implement `useDebounce` and `useDataLoader` as general-purpose hooks that solve real problems
-- Explain why a missing cleanup function in `useEffect` causes stale data bugs, and how encapsulating the fix in a hook prevents the mistake from recurring
+- Add React Router to an existing single-page app, splitting it into a public route and a protected route
+- Create an `AuthContext` that manages a logged-in user separately from the game's own state
+- Implement a `ProtectedRoute` component that redirects unauthenticated visitors to a login page
 
-## Lesson Plan
+## Session Plan
 
-| Duration | What | How or Why |
-|---|---|---|
-| 30 min | Lecture | Slides: the correct/fast/clean arc, what a custom hook is, rules of hooks recap, preview of the three patterns, when to reach for a hook |
-| 20 min | Setup | Scaffold `hooks-demo` with Vite; install json-server; create `db.json`, stylesheet, `AuthContext`, and messy starter `App.jsx`; confirm all three panels work |
-| 25 min | Part 1: `useAuth` | Examine the problem with direct `useContext` calls; create `src/hooks/useAuth.js` with an error guard; update `AuthPanel`; verify the guard fires outside the provider |
-| 30 min | Part 2: `useDebounce` | Explain the debounce mechanism; create `src/hooks/useDebounce.js`; simplify `SearchPanel`; Activity: add `TagSearchPanel` using the same hook |
-| 40 min | Part 3: `useDataLoader` | Demonstrate the stale-data bug with a toggle and artificial delay; add the `ignore` flag fix inline; extract into `src/hooks/useDataLoader.js`; update `DataPanel`; Activity: add `TagsDataPanel` on a different endpoint |
-| 10 min | React Query overview | Comparison table: what `useDataLoader` handles vs what React Query adds; one code example; no lab work |
-| 5 min | Wrap up and Q&A | Summary table; bonus challenges; common pitfalls recap |
-| **Total** | | **160 min** |
+| Duration  | What              | How or Why                                                                                                          |
+| --------- | ----------------- | --------------------------------------------------------------------------------------------------------------------- |
+| 10 min    | Activity briefing | Instructor reads through Parts 1 and 2 and explains how `AuthContext` and `GameContext` stay separate                 |
+| ~110 min  | Guided activity   | Learners work through Parts 1A to 1D and Part 2 with hints and reference solutions available; instructor circulates    |
+| 30 min    | Debrief           | Two learners present their solutions; instructor walks through the reference solution                                 |
+| **Total** |                   | **~150 min**                                                                                                          |

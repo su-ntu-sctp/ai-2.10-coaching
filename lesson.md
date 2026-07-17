@@ -1,1059 +1,613 @@
-# Lesson 2.10: Custom Hooks
+# Coaching Session 2.10: Guarding the Guess Game with React Router and AuthContext
 
 ## Overview
 
-- **Duration:** ~2 hours (hands-on lab)
-- **Prerequisites:** Lesson 2.9 — Testing and Performance Optimisation
+- **Duration:** ~2.5 hours (~2 hours activity, 30 min debrief)
+- **Prerequisites:** Coaching 2.7 (useReducer and useContext), Lesson 2.8 (React Router)
 
-## Learning Objectives
+## Session Objectives
 
-By the end of this lesson, you will be able to:
+By the end of this session, you will be able to:
 
-1. **Extract** stateful logic from components into custom hooks to separate concerns and enable reuse
-2. **Implement** `useDebounce` and `useDataLoader` as general-purpose hooks that solve real problems
-3. **Explain** why a missing cleanup function in `useEffect` causes stale data bugs, and how encapsulating the fix in a hook prevents the mistake from recurring
+1. **Add** React Router to an existing single-page app, splitting it into a public route and a protected route
+2. **Create** an `AuthContext` that manages a logged-in user separately from the game's own state
+3. **Implement** a `ProtectedRoute` component that redirects unauthenticated visitors to a login page
 
 ## Introduction
 
-The theme of Lessons 2.9 and 2.10 is: make it correct, make it fast, make it clean. Lesson 2.9 covered correctness (testing) and speed (performance optimisation). This lesson covers the third step: writing code that is easy to read, test, and reuse.
+In Coaching 2.7, you refactored the Guess Game so that its state lived in a `useReducer`, shared across components through a `GameContext`. The game itself, however, is still one single screen: open the app and you are already playing.
 
-The tool for this is the custom hook. A custom hook is a plain JavaScript function whose name starts with `use`. It can call built-in hooks (`useState`, `useEffect`, `useContext`, and so on) and return whatever values the caller needs. The key insight is that a custom hook does not share state between callers — each component that calls a hook gets its own isolated state. What is shared is the logic.
+This session adds a login gate in front of it. You will bring in React Router from Lesson 2.8 to give the app two routes: a public `/login` page, and a `/game` route that only a signed-in visitor can reach. The pattern is `AuthContext` plus `ProtectedRoute`, the same pattern you used to gate the CRM's `/app` routes, applied here to a smaller, already-familiar codebase so you can focus on the routing and auth mechanics rather than relearning the app.
 
-Rather than adding to the CRM, you will work with a purpose-built app called `hooks-demo`. It has three panels: an authentication panel, a search panel, and a data panel. Each panel is working but messy. Your job is to refactor each one so that the component describes *what* it needs, and the hook takes care of *how*.
+`AuthContext` and `GameContext` stay separate. `AuthContext` only ever answers "who is logged in?" `GameContext` only ever answers "what is the state of the current game?" Keeping them apart means the login system does not need to know anything about secret numbers or scores, and the game does not need to know anything about passwords.
 
 ---
 
-## Setup: The `hooks-demo` App
+## Part 1: Activity (~2 hours)
 
-### Scaffold the Project
+### Starting Point
 
-Create a new Vite + React project:
+Use the `guess-game` project provided alongside this lesson. It is the finished result of Coaching 2.7: game state lives in a reducer inside `GameContext`, and every component reads `state` and `dispatch` with `useContext(GameContext)`.
+
+```
+src/
+├── components/
+│   ├── GameStatus.jsx
+│   ├── GuessInput.jsx
+│   ├── GuessItem.jsx
+│   └── GuessList.jsx
+├── contexts/
+│   └── GameContext.jsx
+├── reducers/
+│   └── gameReducer.js
+├── App.jsx
+└── main.jsx
+```
+
+There is currently no routing, and no concept of a logged-in user. `App.jsx` renders the game directly.
+
+### Install React Router
 
 ```bash
-npm create vite@latest hooks-demo -- --template react
-cd hooks-demo
-npm install
+npm install react-router@7
 ```
 
-### Install json-server
+---
 
-You will need json-server to serve fake API data in Part 3:
+### Part 1A: Create AuthContext
 
-```bash
-npm install -D json-server
-```
+Before any routing exists, the app needs somewhere to keep track of who is logged in. This is a second context, entirely separate from `GameContext`.
 
-### Add the Database File
+#### Task
 
-Create `db.json` in the project root:
+Create `src/contexts/AuthContext.jsx`. It should expose a `user` value (`null` when signed out), plus `login` and `logout` functions. Use a small hardcoded list of valid credentials rather than a real backend, the same approach `AuthContext` used in Lesson 2.8.
 
-```json
-{
-  "contacts": [
-    { "id": 1, "name": "Alice Tan", "email": "alice@example.com", "role": "admin" },
-    { "id": 2, "name": "Bob Lim", "email": "bob@example.com", "role": "user" },
-    { "id": 3, "name": "Carol Wong", "email": "carol@example.com", "role": "user" },
-    { "id": 4, "name": "David Chen", "email": "david@example.com", "role": "admin" },
-    { "id": 5, "name": "Eve Ng", "email": "eve@example.com", "role": "user" },
-    { "id": 6, "name": "Frank Ho", "email": "frank@example.com", "role": "user" }
-  ],
-  "tags": [
-    { "id": 1, "label": "React" },
-    { "id": 2, "label": "TypeScript" },
-    { "id": 3, "label": "Testing" },
-    { "id": 4, "label": "Performance" },
-    { "id": 5, "label": "Custom Hooks" },
-    { "id": 6, "label": "React Query" }
-  ]
-}
-```
+#### Hints
 
-### Add Scripts to `package.json`
+1. `createContext(null)` is the default value; the actual value comes from the provider.
+2. `user` can start as `null` and be set with `useState`.
+3. `login` should check a username and password against a hardcoded list and return `true` or `false` so the login form knows whether to show an error.
+4. `logout` just needs to set `user` back to `null`.
 
-Open `package.json` and add a `server` script:
-
-```json
-{
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview",
-    "server": "json-server --watch db.json --port 3001"
-  }
-}
-```
-
-### Add the Stylesheet
-
-Replace the entire contents of `src/App.css` with the following:
-
-```css
-/* src/App.css */
-*, *::before, *::after { box-sizing: border-box; }
-
-body {
-  font-family: sans-serif;
-  margin: 0;
-  background: #f8fafc;
-  color: #1a202c;
-}
-
-.app {
-  max-width: 900px;
-  margin: 0 auto;
-  padding: 2rem;
-}
-
-.app h1 {
-  margin-bottom: 2rem;
-  font-size: 1.5rem;
-}
-
-.panels {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 1.5rem;
-}
-
-.panel {
-  background: #fff;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  padding: 1.25rem;
-}
-
-.panel h2 {
-  margin: 0 0 1rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #4a5568;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.auth-panel p { margin: 0.5rem 0; font-size: 0.95rem; }
-
-input[type="text"],
-input[type="password"] {
-  width: 100%;
-  padding: 0.4rem 0.6rem;
-  border: 1px solid #cbd5e0;
-  border-radius: 4px;
-  font-size: 0.9rem;
-  margin-bottom: 0.5rem;
-}
-
-button {
-  padding: 0.4rem 0.9rem;
-  background: #3182ce;
-  color: #fff;
-  border: none;
-  border-radius: 4px;
-  font-size: 0.9rem;
-  cursor: pointer;
-}
-
-button:hover { background: #2b6cb0; }
-
-button.secondary {
-  background: #e2e8f0;
-  color: #4a5568;
-  margin-left: 0.5rem;
-}
-
-button.secondary:hover { background: #cbd5e0; }
-
-.search-box { margin-bottom: 0.75rem; }
-
-.result-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-
-.result-list li {
-  padding: 0.3rem 0;
-  font-size: 0.9rem;
-  border-bottom: 1px solid #f0f0f0;
-}
-
-.result-list li:last-child { border-bottom: none; }
-
-.status {
-  font-size: 0.85rem;
-  color: #718096;
-  margin-top: 0.5rem;
-}
-
-.error { color: #c53030; font-size: 0.9rem; }
-```
-
-### Create the Context and Provider
+<details>
+<summary>Reference solution</summary>
 
 Create `src/contexts/AuthContext.jsx`:
 
 ```jsx
 // src/contexts/AuthContext.jsx
-import { createContext, useState } from 'react';
+import { createContext, useState } from "react";
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const AuthContext = createContext(null);
 
-const FAKE_USERS = {
-  admin: { name: 'Alice Tan', role: 'admin' },
-  user: { name: 'Bob Lim', role: 'user' },
-};
+const VALID_USERS = [
+  { username: "player1", password: "password123", name: "Alex" },
+  { username: "player2", password: "password123", name: "Sam" },
+];
 
 export function AuthProvider({ children }) {
-  const [currentUser, setCurrentUser] = useState(null);
+  const [user, setUser] = useState(null);
 
-  function login(username, password) {
-    if (password !== 'password') return false;
-    const user = FAKE_USERS[username];
-    if (!user) return false;
-    setCurrentUser(user);
+  const login = (username, password) => {
+    const match = VALID_USERS.find(
+      (u) => u.username === username && u.password === password,
+    );
+    if (!match) return false;
+    setUser({ username: match.username, name: match.name });
     return true;
-  }
+  };
 
-  function logout() {
-    setCurrentUser(null);
-  }
+  const logout = () => {
+    setUser(null);
+  };
 
   return (
-    <AuthContext.Provider value={{ currentUser, login, logout }}>
+    <AuthContext.Provider value={{ user, login, logout }}>
       {children}
     </AuthContext.Provider>
   );
 }
 ```
 
-This is a simple fake auth system. The only valid password is `"password"`, and the two valid usernames are `"admin"` and `"user"`.
+</details>
 
-### Create the Starter App Shell
+**Check:** No visible change yet, `AuthContext` is not wired into the app. This part only creates the context and provider.
 
-Replace `src/App.jsx` with the following. This is the *messy* starting point — all logic is inline. You will refactor it progressively through the lesson:
+---
+
+### Part 1B: Add Routing with a Public Login Page
+
+Now that `AuthContext` exists, wrap the app with both providers and introduce two routes: a public `/login` page, and `/game`, which will be protected in Part 1C.
+
+#### Task
+
+1. Wrap `App` with `AuthProvider` and `BrowserRouter` in `main.jsx`.
+2. Create `src/pages/LoginPage.jsx` with a username and password form that calls `login` from `AuthContext`.
+3. Update `src/App.jsx` to declare two routes: `path="login"` renders `LoginPage`, and `path="game"` renders the existing game UI.
+4. After a successful login, navigate to `/game`.
+
+#### Hints
+
+1. `GameProvider` only needs to wrap the `/game` route's content, not the whole app, `LoginPage` does not need game state.
+2. `useNavigate` gives you a function to call after the form submits; it is not the same thing as the `<Navigate>` component you will use in Part 1C.
+3. Move the JSX currently in `App.jsx` (`GameStatus`, `GuessInput`, `GuessList`, the heading, the reset button) into its own `GamePage` component.
+4. Give `LoginPage` a visible hint of valid credentials, the same way the CRM's login page did in Lesson 2.8, so testing the route is easy.
+
+<details>
+<summary>Reference solution</summary>
+
+Update `src/main.jsx`:
+
+```jsx
+// src/main.jsx
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import { BrowserRouter } from "react-router";
+
+import { AuthProvider } from "./contexts/AuthContext";
+import App from "./App.jsx";
+import "./index.css";
+
+createRoot(document.getElementById("root")).render(
+  <StrictMode>
+    <BrowserRouter>
+      <AuthProvider>
+        <App />
+      </AuthProvider>
+    </BrowserRouter>
+  </StrictMode>,
+);
+```
+
+Create `src/pages/LoginPage.jsx`:
+
+```jsx
+// src/pages/LoginPage.jsx
+import { useContext, useState } from "react";
+import { useNavigate, useLocation } from "react-router";
+
+import { AuthContext } from "../contexts/AuthContext";
+import styles from "./LoginPage.module.css";
+
+function LoginPage() {
+  const { login } = useContext(AuthContext);
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+
+  const submitHandler = (e) => {
+    e.preventDefault();
+    const ok = login(username, password);
+    if (!ok) {
+      setError("Incorrect username or password.");
+      return;
+    }
+    const from = location.state?.from?.pathname || "/game";
+    navigate(from, { replace: true });
+  };
+
+  return (
+    <div className={styles.page}>
+      <h1>Sign in to play</h1>
+      <form onSubmit={submitHandler}>
+        <label htmlFor="username">Username</label>
+        <input
+          id="username"
+          type="text"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+        />
+        <label htmlFor="password">Password</label>
+        <input
+          id="password"
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
+        <button type="submit">Log in</button>
+        {error && <p className={styles.error}>{error}</p>}
+      </form>
+      <p className={styles.hint}>Try: player1 / password123</p>
+    </div>
+  );
+}
+
+export default LoginPage;
+```
+
+Create `src/pages/LoginPage.module.css`:
+
+```css
+/* src/pages/LoginPage.module.css */
+.page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 40px 20px;
+}
+
+.error {
+  color: #c53030;
+}
+
+.hint {
+  color: #718096;
+  font-size: 0.9rem;
+}
+```
+
+Create `src/pages/GamePage.jsx`, moving the game UI out of `App.jsx`:
+
+```jsx
+// src/pages/GamePage.jsx
+import { useContext } from "react";
+
+import GameStatus from "../components/GameStatus";
+import GuessInput from "../components/GuessInput";
+import GuessList from "../components/GuessList";
+import { GameContext } from "../contexts/GameContext";
+import styles from "../App.module.css";
+
+function GamePage() {
+  const { state, dispatch } = useContext(GameContext);
+
+  const resetHandler = () => {
+    dispatch({ type: "NEW_GAME" });
+  };
+
+  return (
+    <div className={styles.game}>
+      <h1>Guess the Number</h1>
+      <p>I am thinking of a number between 1 and 20.</p>
+      <p>Score: {state.score}</p>
+
+      <GameStatus />
+      <GuessInput />
+      {state.status !== "playing" && (
+        <button
+          type="button"
+          className={styles.resetButton}
+          onClick={resetHandler}
+        >
+          New Game
+        </button>
+      )}
+      <GuessList />
+    </div>
+  );
+}
+
+export default GamePage;
+```
+
+Update `src/App.jsx`:
 
 ```jsx
 // src/App.jsx
-import './App.css';
-import { useContext, useState, useEffect } from 'react';
-import { AuthContext, AuthProvider } from './contexts/AuthContext';
+import { Routes, Route } from "react-router";
 
-// ─── Auth Panel (messy: reads context directly, no encapsulation) ──────────────
-function AuthPanel() {
-  const { currentUser, login, logout } = useContext(AuthContext);
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+import { GameProvider } from "./contexts/GameContext";
+import LoginPage from "./pages/LoginPage";
+import GamePage from "./pages/GamePage";
 
-  function handleLogin(e) {
-    e.preventDefault();
-    const ok = login(username, password);
-    if (!ok) setError('Invalid username or password.');
-    else setError('');
-  }
-
-  if (currentUser) {
-    return (
-      <div className="panel auth-panel">
-        <h2>Auth</h2>
-        <p>Logged in as <strong>{currentUser.name}</strong></p>
-        <p>Role: <strong>{currentUser.role}</strong></p>
-        <button onClick={logout}>Log out</button>
-      </div>
-    );
-  }
-
+function App() {
   return (
-    <div className="panel auth-panel">
-      <h2>Auth</h2>
-      <form onSubmit={handleLogin}>
-        <input
-          type="text"
-          placeholder="Username"
-          value={username}
-          onChange={e => setUsername(e.target.value)}
-        />
-        <input
-          type="password"
-          placeholder="Password"
-          value={password}
-          onChange={e => setPassword(e.target.value)}
-        />
-        <button type="submit">Log in</button>
-        {error && <p className="error">{error}</p>}
-      </form>
-      <p className="status">Try: admin / password</p>
-    </div>
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route
+        path="/game"
+        element={
+          <GameProvider>
+            <GamePage />
+          </GameProvider>
+        }
+      />
+    </Routes>
   );
 }
 
-// ─── Search Panel (messy: debounce logic inline) ───────────────────────────────
-const CONTACTS = [
-  'Alice Tan', 'Bob Lim', 'Carol Wong', 'David Chen', 'Eve Ng', 'Frank Ho',
-];
-
-function SearchPanel() {
-  const [query, setQuery] = useState('');
-  const [debouncedQuery, setDebouncedQuery] = useState('');
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedQuery(query);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [query]);
-
-  const results = CONTACTS.filter(name =>
-    name.toLowerCase().includes(debouncedQuery.toLowerCase())
-  );
-
-  return (
-    <div className="panel">
-      <h2>Search</h2>
-      <div className="search-box">
-        <input
-          type="text"
-          placeholder="Search contacts..."
-          value={query}
-          onChange={e => setQuery(e.target.value)}
-        />
-      </div>
-      <ul className="result-list">
-        {results.map(name => <li key={name}>{name}</li>)}
-      </ul>
-      <p className="status">{results.length} result{results.length !== 1 ? 's' : ''}</p>
-    </div>
-  );
-}
-
-// ─── Data Panel (messy: fetch logic inline, cleanup bug present) ───────────────
-function DataPanel() {
-  const [data, setData] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    setLoading(true);
-    fetch('http://localhost:3001/contacts')
-      .then(r => r.json())
-      .then(json => {
-        setData(json);
-        setLoading(false);
-      })
-      .catch(err => {
-        setError(err.message);
-        setLoading(false);
-      });
-  }, []);
-
-  if (loading) return <div className="panel"><h2>Data</h2><p>Loading...</p></div>;
-  if (error) return <div className="panel"><h2>Data</h2><p className="error">Error: {error}</p></div>;
-
-  return (
-    <div className="panel">
-      <h2>Data</h2>
-      <ul className="result-list">
-        {data.map(contact => (
-          <li key={contact.id}>{contact.name} — {contact.role}</li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-// ─── App Root ──────────────────────────────────────────────────────────────────
-function AppContent() {
-  return (
-    <div className="app">
-      <h1>hooks-demo</h1>
-      <div className="panels">
-        <AuthPanel />
-        <SearchPanel />
-        <DataPanel />
-      </div>
-    </div>
-  );
-}
-
-export default function App() {
-  return (
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
-  );
-}
+export default App;
 ```
 
-### Start the Servers
+</details>
 
-Open two terminal tabs:
-
-```bash
-# Terminal 1: React dev server
-npm run dev
-
-# Terminal 2: json-server
-npm run server
-```
-
-Open `http://localhost:5173`. You should see three panels. Log in with `admin / password`. The search box filters names as you type. The data panel loads contacts from json-server.
-
-This is the starting point. Everything works — but each component body is cluttered with plumbing. By the end of the lesson, each panel will be clean.
+**Check:** Navigate to `http://localhost:5173/login` and log in with `player1 / password123`. You should land on `/game` and the game should behave exactly as it did in Coaching 2.7. Navigating directly to `/game` without logging in should also work for now, that gap is closed in the next part.
 
 ---
 
-## Part 1: `useAuth` — Encapsulating Context (25 minutes)
+### Part 1C: Lock /game Behind ProtectedRoute
 
-### The Problem
+Right now, anyone can type `/game` into the address bar and play without logging in. `ProtectedRoute` closes this gap in one place, rather than checking `user` inside `GamePage` itself.
 
-Look at `AuthPanel` in `App.jsx`. It calls `useContext(AuthContext)` directly. Every component that needs auth must therefore:
+#### Task
 
-1. Import `AuthContext` from the contexts folder
-2. Import `useContext` from React
-3. Call `useContext(AuthContext)` and remember the correct context object
+1. Create `src/components/ProtectedRoute.jsx`. It should read `user` from `AuthContext`, redirect to `/login` if `user` is `null`, and otherwise render `<Outlet />`.
+2. Nest the `/game` route inside `ProtectedRoute` in `App.jsx`.
+3. Add a redirect-back: after logging in, the visitor should land on whichever page they originally tried to reach.
+4. Add a root redirect: visiting `/` should send the visitor to `/game` (which then redirects to `/login` if they are not signed in).
 
-If you rename `AuthContext`, add a guard, or change the shape of the context value, you must update every consumer. There is also no protection against calling `useContext(AuthContext)` outside the `<AuthProvider>` — you receive `null` back with no explanation.
+#### Hints
 
-A custom hook fixes all of this.
-
-### Create `useAuth`
-
-Create the folder and file:
-
-```bash
-mkdir -p src/hooks
-```
-
-Create `src/hooks/useAuth.js`:
-
-```js
-// src/hooks/useAuth.js
-import { useContext } from 'react';
-import { AuthContext } from '../contexts/AuthContext';
-
-export function useAuth() {
-  const context = useContext(AuthContext);
-  if (context === null) {
-    throw new Error('useAuth must be used inside <AuthProvider>');
-  }
-  return context;
-}
-```
-
-The hook does three things:
-
-1. Imports `AuthContext` itself, so callers do not need to
-2. Calls `useContext` with the correct context
-3. Throws a descriptive error if the hook is used outside the provider
-
-### Update `AuthPanel`
-
-In `src/App.jsx`, update the imports and `AuthPanel` to use the hook:
-
-```jsx
-// Before — two imports required for auth
-import { useContext, useState, useEffect } from 'react';
-import { AuthContext, AuthProvider } from './contexts/AuthContext';
-
-function AuthPanel() {
-  const { currentUser, login, logout } = useContext(AuthContext);
-  // ...
-}
-```
-
-```jsx
-// After — one hook import, no mention of AuthContext
-import { useState, useEffect } from 'react';
-import { AuthProvider } from './contexts/AuthContext';
-import { useAuth } from './hooks/useAuth';
-
-function AuthPanel() {
-  const { currentUser, login, logout } = useAuth();
-  // ...
-}
-```
-
-The rest of `AuthPanel` is unchanged. Test by logging in and out — behaviour should be identical.
-
-> **What the hook does not change**
->
-> `useAuth` does not add new functionality and does not create new state. Each component that calls `useAuth()` reads the same context value from the same `<AuthProvider>`. The hook is purely an encapsulation — it hides *where* the value comes from so that consuming components only need to know *what* they get back.
-
-### Verify the Error Guard
-
-Temporarily add `<AuthPanel />` directly inside `App` outside the `<AuthProvider>` and reload the page. You should see a clear error: `"useAuth must be used inside <AuthProvider>"`. Remove the temporary change before continuing.
-
-This guard would be impossible to write without the custom hook — callers using `useContext` directly would receive `null` silently.
-
----
-
-## Part 2: `useDebounce` — Derived State with a Delay (30 minutes)
-
-### The Problem
-
-Look at `SearchPanel` in `App.jsx`. The debounce logic takes up seven lines:
-
-```jsx
-const [debouncedQuery, setDebouncedQuery] = useState('');
-
-useEffect(() => {
-  const timer = setTimeout(() => {
-    setDebouncedQuery(query);
-  }, 300);
-  return () => clearTimeout(timer);
-}, [query]);
-```
-
-This pattern is correct, but it is entangled with `SearchPanel`'s other responsibilities. If a second component ever needs debouncing — a tag search, a live-filter input — you would duplicate these seven lines.
-
-A custom hook extracts the pattern so any component can write:
-
-```jsx
-const debouncedQuery = useDebounce(query, 300);
-```
-
-### How Debouncing Works
-
-Every time `query` changes (on each keystroke), the `useEffect` runs. It sets a 300ms timer. If `query` changes again before the timer fires — the user keeps typing — the cleanup function cancels the old timer and a new one starts. The `debouncedQuery` state only updates after the user pauses for 300ms.
-
-The result: the filtered list does not update on every keystroke, only when the user stops typing. For a search that calls an API, this prevents a network request on every character.
-
-### Create `useDebounce`
-
-Create `src/hooks/useDebounce.js`:
-
-```js
-// src/hooks/useDebounce.js
-import { useState, useEffect } from 'react';
-
-export function useDebounce(value, delay) {
-  const [debouncedValue, setDebouncedValue] = useState(value);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedValue(value);
-    }, delay);
-    return () => clearTimeout(timer);
-  }, [value, delay]);
-
-  return debouncedValue;
-}
-```
-
-The hook accepts any `value` and a `delay` in milliseconds. It maintains its own `debouncedValue` state, schedules an update after `delay` ms, and cancels the previous timer if `value` changes before the delay elapses.
-
-### Update `SearchPanel`
-
-Add the import at the top of `App.jsx`:
-
-```jsx
-import { useDebounce } from './hooks/useDebounce';
-```
-
-Then simplify `SearchPanel`:
-
-```jsx
-// Before — seven lines of timing logic inside the component
-function SearchPanel() {
-  const [query, setQuery] = useState('');
-  const [debouncedQuery, setDebouncedQuery] = useState('');
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedQuery(query);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [query]);
-
-  const results = CONTACTS.filter(name =>
-    name.toLowerCase().includes(debouncedQuery.toLowerCase())
-  );
-  // ...
-}
-```
-
-```jsx
-// After — intent is clear, mechanism is hidden
-function SearchPanel() {
-  const [query, setQuery] = useState('');
-  const debouncedQuery = useDebounce(query, 300);
-
-  const results = CONTACTS.filter(name =>
-    name.toLowerCase().includes(debouncedQuery.toLowerCase())
-  );
-  // ...
-}
-```
-
-You can also remove `useEffect` from the React import line if it is no longer used elsewhere in `App.jsx`.
-
-The component now reads as a clear statement of intent: "I have a query. Its debounced version is derived by the hook. I filter contacts by the debounced version."
-
-> **Each caller gets its own state**
->
-> If two components both call `useDebounce(query, 300)`, each gets its own independent `debouncedValue` state. Calling a hook is like calling a function — the state lives inside the component instance that called it, not inside the hook file. What is shared is the logic, not the data.
-
----
-
-### Activity: Add a Tag Search Panel (10 minutes)
-
-Now that `useDebounce` exists, add a second search panel for the tag list without writing the debounce logic again.
-
-**Task:** Add a `TagSearchPanel` component to `App.jsx` and display it as a fourth panel. The panel should:
-
-1. Show a search input
-2. Filter the `TAGS` list by the typed value, debounced by 300ms
-3. Display the matching tags as a list
-
-Add this constant near the top of `App.jsx`, alongside `CONTACTS`:
-
-```js
-const TAGS = ['React', 'TypeScript', 'Testing', 'Performance', 'Custom Hooks', 'React Query'];
-```
-
-**Hints:**
-
-1. Copy the structure of `SearchPanel` — the tag panel is nearly identical
-2. Call `useDebounce(query, 300)` the same way; the hook works for any string value
-3. Filter `TAGS` with `.toLowerCase().includes(...)` the same way contacts are filtered
-4. Add `<TagSearchPanel />` to the `.panels` div in `AppContent`
+1. `Navigate` is a component you return from render, not a function you call, that is `useNavigate`, which you already used in `LoginPage`.
+2. Pass the current location to `<Navigate>` as `state={{ from: location }}` so `LoginPage` knows where to send the visitor back to.
+3. `useLocation` gives you the current location object; you will need it inside `ProtectedRoute` to build that `state`.
+4. A `<Route element={<ProtectedRoute />}>` with no `path` wraps its children without adding a URL segment, exactly like the CRM's `/app` guard in Lesson 2.8.
 
 <details>
 <summary>Reference solution</summary>
 
+Create `src/components/ProtectedRoute.jsx`:
+
 ```jsx
-const TAGS = ['React', 'TypeScript', 'Testing', 'Performance', 'Custom Hooks', 'React Query'];
+// src/components/ProtectedRoute.jsx
+import { useContext } from "react";
+import { Navigate, Outlet, useLocation } from "react-router";
 
-function TagSearchPanel() {
-  const [query, setQuery] = useState('');
-  const debouncedQuery = useDebounce(query, 300);
+import { AuthContext } from "../contexts/AuthContext";
 
-  const results = TAGS.filter(tag =>
-    tag.toLowerCase().includes(debouncedQuery.toLowerCase())
-  );
+function ProtectedRoute() {
+  const { user } = useContext(AuthContext);
+  const location = useLocation();
 
-  return (
-    <div className="panel">
-      <h2>Tags</h2>
-      <div className="search-box">
-        <input
-          type="text"
-          placeholder="Search tags..."
-          value={query}
-          onChange={e => setQuery(e.target.value)}
-        />
-      </div>
-      <ul className="result-list">
-        {results.map(tag => <li key={tag}>{tag}</li>)}
-      </ul>
-      <p className="status">{results.length} result{results.length !== 1 ? 's' : ''}</p>
-    </div>
-  );
+  if (!user) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  return <Outlet />;
 }
+
+export default ProtectedRoute;
 ```
 
-Add `<TagSearchPanel />` inside the `.panels` div in `AppContent`. The `useDebounce` hook is imported once and used by both panels, each with its own independent state.
+Update `src/App.jsx`:
+
+```jsx
+// src/App.jsx
+import { Routes, Route, Navigate } from "react-router";
+
+import { GameProvider } from "./contexts/GameContext";
+import ProtectedRoute from "./components/ProtectedRoute";
+import LoginPage from "./pages/LoginPage";
+import GamePage from "./pages/GamePage";
+
+function App() {
+  return (
+    <Routes>
+      <Route index element={<Navigate to="/game" replace />} />
+      <Route path="/login" element={<LoginPage />} />
+      <Route element={<ProtectedRoute />}>
+        <Route
+          path="/game"
+          element={
+            <GameProvider>
+              <GamePage />
+            </GameProvider>
+          }
+        />
+      </Route>
+    </Routes>
+  );
+}
+
+export default App;
+```
 
 </details>
 
+**Check:** Log out (add a temporary logout button to `GamePage` if you have not already, or clear state by refreshing after calling `logout` from the console) and try navigating directly to `/game`. You should be redirected to `/login`. After logging back in, you should land on `/game`, not somewhere else. Visiting `/` while signed out should also end up at `/login`.
+
+> **Why does `state.status` reset when you follow a redirect back to `/game`?** `GameProvider` wraps the `/game` route's `element`, so every time React Router mounts that route, `GameProvider` mounts fresh and calls `getInitialState()` again. This is expected: a new sign-in starts a new game.
+
 ---
 
-## Part 3: `useDataLoader` — Async Fetch with Cleanup (40 minutes)
+### Part 1D: Add a Logout Button
 
-### The Problem
+`GamePage` currently has no way to sign out. Add one, reading `logout` from `AuthContext`.
 
-Look at `DataPanel` in `App.jsx`. It fetches data inside a `useEffect`. The code looks correct, but it has a silent bug:
+#### Task
 
-```jsx
-useEffect(() => {
-  setLoading(true);
-  fetch('http://localhost:3001/contacts')
-    .then(r => r.json())
-    .then(json => {
-      setData(json);      // ← called even if the component has unmounted
-      setLoading(false);  // ← same
-    })
-    .catch(err => {
-      setError(err.message);
-      setLoading(false);
-    });
-}, []);
-```
+Add a "Log out" button to `GamePage` that calls `logout` from `AuthContext` and returns the visitor to `/login`.
 
-The `useEffect` starts a network request. If the component unmounts before the request finishes — for example, the user navigates away — the `.then()` callback still runs and calls `setData` on a component that no longer exists. In a fast network this is harmless. On a slow network, or when the URL can change (if `url` were a dependency), this causes stale data: a slow earlier request resolves after a fast later one, overwriting the correct result with outdated data.
+#### Hints
 
-### Demonstrate the Bug
+1. `GamePage` already imports `useContext` for `GameContext`; you will need a second `useContext` call for `AuthContext`.
+2. `logout()` alone does not navigate anywhere, `AuthContext`'s `user` becoming `null` will cause `ProtectedRoute` to redirect the next time `/game` is visited, but you are already on `/game` when the button is clicked. Call `useNavigate` and navigate to `/login` explicitly after calling `logout()`.
 
-To see the scenario, update `DataPanel`'s `useEffect` to simulate a slow fetch:
+<details>
+<summary>Reference solution</summary>
+
+Update `src/pages/GamePage.jsx`:
 
 ```jsx
-useEffect(() => {
-  setLoading(true);
-  setTimeout(() => {
-    fetch('http://localhost:3001/contacts')
-      .then(r => r.json())
-      .then(json => {
-        setData(json);
-        setLoading(false);
-      });
-  }, 3000);
-}, []);
-```
+// src/pages/GamePage.jsx
+import { useContext } from "react";
+import { useNavigate } from "react-router";
 
-Make `DataPanel` conditionally renderable. Update `AppContent` with a toggle button:
+import GameStatus from "../components/GameStatus";
+import GuessInput from "../components/GuessInput";
+import GuessList from "../components/GuessList";
+import { GameContext } from "../contexts/GameContext";
+import { AuthContext } from "../contexts/AuthContext";
+import styles from "../App.module.css";
 
-```jsx
-function AppContent() {
-  const [showData, setShowData] = useState(true);
+function GamePage() {
+  const { state, dispatch } = useContext(GameContext);
+  const { user, logout } = useContext(AuthContext);
+  const navigate = useNavigate();
 
-  return (
-    <div className="app">
-      <h1>hooks-demo</h1>
-      <button onClick={() => setShowData(s => !s)} className="secondary">
-        Toggle Data Panel
-      </button>
-      <div className="panels">
-        <AuthPanel />
-        <SearchPanel />
-        {showData && <DataPanel />}
-      </div>
-    </div>
-  );
-}
-```
-
-Reload the page. Click Toggle to hide the panel while the 3-second delay is running. After 3 seconds, check the browser console — you will see the React warning: `"Warning: Can't perform a React state update on an unmounted component"`.
-
-Remove the `setTimeout` wrapper before continuing. The real fix is next.
-
-### Fix the Bug with a Cleanup Flag
-
-The standard fix uses an `ignore` flag. Update `DataPanel`'s `useEffect`:
-
-```jsx
-useEffect(() => {
-  let ignore = false;
-  setLoading(true);
-  fetch('http://localhost:3001/contacts')
-    .then(r => r.json())
-    .then(json => {
-      if (!ignore) {
-        setData(json);
-        setLoading(false);
-      }
-    })
-    .catch(err => {
-      if (!ignore) {
-        setError(err.message);
-        setLoading(false);
-      }
-    });
-  return () => {
-    ignore = true;
+  const resetHandler = () => {
+    dispatch({ type: "NEW_GAME" });
   };
-}, []);
-```
 
-The cleanup function `() => { ignore = true; }` runs when the component unmounts, or when the dependency array value changes. After that, the `.then()` callback checks `ignore` before calling `setState` and skips the update if the component is no longer mounted.
-
-> **Why `ignore` and not `AbortController`?**
->
-> `AbortController` cancels the in-flight network request, which is more efficient. The `ignore` flag is simpler to read and teach. Both are correct. `AbortController` is the production preference; `ignore` is a valid first step and the easier concept to reason about.
-
-### Extract the Fix into `useDataLoader`
-
-The `ignore` flag pattern is correct, but it must now be written every time data is fetched. If a developer forgets it in one place, the bug comes back. Extracting it into a hook makes the fix automatic for every caller.
-
-Create `src/hooks/useDataLoader.js`:
-
-```js
-// src/hooks/useDataLoader.js
-import { useState, useEffect } from 'react';
-
-export function useDataLoader(url) {
-  const [data, setData] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    let ignore = false;
-    setLoading(true);
-    setError(null);
-
-    fetch(url)
-      .then(r => {
-        if (!r.ok) throw new Error(`Request failed: ${r.status}`);
-        return r.json();
-      })
-      .then(json => {
-        if (!ignore) {
-          setData(json);
-          setLoading(false);
-        }
-      })
-      .catch(err => {
-        if (!ignore) {
-          setError(err.message);
-          setLoading(false);
-        }
-      });
-
-    return () => {
-      ignore = true;
-    };
-  }, [url]);
-
-  return { data, loading, error };
-}
-```
-
-Two details to note:
-
-- `url` is in the dependency array. If the URL changes, the effect re-runs and the previous in-flight request is abandoned via `ignore`.
-- The hook returns `{ data, loading, error }` — three pieces of state that always travel together.
-
-### Update `DataPanel`
-
-Add the import at the top of `App.jsx`:
-
-```jsx
-import { useDataLoader } from './hooks/useDataLoader';
-```
-
-Then replace the inline fetch logic:
-
-```jsx
-// Before — 18 lines of boilerplate
-function DataPanel() {
-  const [data, setData] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    let ignore = false;
-    setLoading(true);
-    fetch('http://localhost:3001/contacts')
-      .then(r => r.json())
-      .then(json => { if (!ignore) { setData(json); setLoading(false); } })
-      .catch(err => { if (!ignore) { setError(err.message); setLoading(false); } });
-    return () => { ignore = true; };
-  }, []);
-
-  if (loading) return <div className="panel"><h2>Data</h2><p>Loading...</p></div>;
-  if (error) return <div className="panel"><h2>Data</h2><p className="error">Error: {error}</p></div>;
+  const logoutHandler = () => {
+    logout();
+    navigate("/login", { replace: true });
+  };
 
   return (
-    <div className="panel">
-      <h2>Data</h2>
-      <ul className="result-list">
-        {data.map(contact => <li key={contact.id}>{contact.name} — {contact.role}</li>)}
-      </ul>
+    <div className={styles.game}>
+      <h1>Guess the Number</h1>
+      <p>Signed in as {user.name}</p>
+      <p>I am thinking of a number between 1 and 20.</p>
+      <p>Score: {state.score}</p>
+
+      <GameStatus />
+      <GuessInput />
+      {state.status !== "playing" && (
+        <button
+          type="button"
+          className={styles.resetButton}
+          onClick={resetHandler}
+        >
+          New Game
+        </button>
+      )}
+      <GuessList />
+
+      <button type="button" className={styles.resetButton} onClick={logoutHandler}>
+        Log out
+      </button>
     </div>
   );
 }
+
+export default GamePage;
 ```
 
-```jsx
-// After — one line of state, then rendering
-function DataPanel() {
-  const { data, loading, error } = useDataLoader('http://localhost:3001/contacts');
+</details>
 
-  if (loading) return <div className="panel"><h2>Data</h2><p>Loading...</p></div>;
-  if (error) return <div className="panel"><h2>Data</h2><p className="error">Error: {error}</p></div>;
-
-  return (
-    <div className="panel">
-      <h2>Data</h2>
-      <ul className="result-list">
-        {data.map(contact => (
-          <li key={contact.id}>{contact.name} — {contact.role}</li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-```
-
-The cleanup is now automatic. Every caller of `useDataLoader` gets the `ignore` flag behaviour without knowing it exists. A developer cannot forget it because there is nothing to write.
-
-You can also tidy up the React import — `useEffect` is no longer used directly in `App.jsx`.
+**Check:** Clicking "Log out" should return you to `/login`. Trying to navigate back to `/game` afterward (including with the browser Back button) should redirect you to `/login` again, not show stale game state.
 
 ---
 
-### Activity: Add a Tags Data Panel (10 minutes)
+## Part 2: Add a 404 Page
 
-`useDataLoader` can load any URL. Add a panel that loads tags from json-server.
+Right now, any URL that does not match `/`, `/login`, or `/game` renders a blank page, `Routes` has nothing to fall back to. Add a catch-all `NotFoundPage`.
 
-**Task:** Add a `TagsDataPanel` component that:
+### Task
 
-1. Uses `useDataLoader('http://localhost:3001/tags')` to fetch the tags list
-2. Shows a loading state while the request is in flight
-3. Shows an error message if the request fails
-4. Renders each tag's `label` field in a list
+Add a catch-all `NotFoundPage` for any URL that does not match `/`, `/login`, or `/game`. It should render a simple message and a link back to `/`.
 
-Add `<TagsDataPanel />` to the `.panels` grid in `AppContent`.
+### Hints
 
-**Hints:**
-
-1. The structure is identical to `DataPanel` — only the URL and field names change
-2. The `tags` records have `id` and `label` fields (see `db.json`)
-3. Use `tag.id` as the key and `tag.label` as the display text
+1. React Router's catch-all path is `*`. Declare it last, outside `ProtectedRoute`, so it is reachable whether or not the visitor is signed in.
+2. Use `Link` from `react-router`, not a plain `<a>` tag, so the navigation does not trigger a full page reload.
+3. `LoginPage`'s route declaration is your model for adding a new top-level route in `App.jsx`.
 
 <details>
 <summary>Reference solution</summary>
 
+Create `src/pages/NotFoundPage.jsx`:
+
 ```jsx
-function TagsDataPanel() {
-  const { data, loading, error } = useDataLoader('http://localhost:3001/tags');
+// src/pages/NotFoundPage.jsx
+import { Link } from "react-router";
 
-  if (loading) return <div className="panel"><h2>Tags (API)</h2><p>Loading...</p></div>;
-  if (error) return <div className="panel"><h2>Tags (API)</h2><p className="error">Error: {error}</p></div>;
+import styles from "./NotFoundPage.module.css";
 
+function NotFoundPage() {
   return (
-    <div className="panel">
-      <h2>Tags (API)</h2>
-      <ul className="result-list">
-        {data.map(tag => (
-          <li key={tag.id}>{tag.label}</li>
-        ))}
-      </ul>
+    <div className={styles.page}>
+      <h1>404</h1>
+      <p>This page does not exist.</p>
+      <Link to="/">Back to Home</Link>
     </div>
   );
 }
+
+export default NotFoundPage;
 ```
 
-Both `DataPanel` and `TagsDataPanel` use `useDataLoader`. Each gets its own independent `data`, `loading`, and `error` state. The cleanup behaviour is present in both without any additional effort.
+Create `src/pages/NotFoundPage.module.css`:
+
+```css
+/* src/pages/NotFoundPage.module.css */
+.page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 40px 20px;
+}
+```
+
+Update `src/App.jsx`, adding the catch-all route last:
+
+```jsx
+// src/App.jsx
+import { Routes, Route, Navigate } from "react-router";
+
+import { GameProvider } from "./contexts/GameContext";
+import ProtectedRoute from "./components/ProtectedRoute";
+import LoginPage from "./pages/LoginPage";
+import GamePage from "./pages/GamePage";
+import NotFoundPage from "./pages/NotFoundPage";
+
+function App() {
+  return (
+    <Routes>
+      <Route index element={<Navigate to="/game" replace />} />
+      <Route path="/login" element={<LoginPage />} />
+      <Route element={<ProtectedRoute />}>
+        <Route
+          path="/game"
+          element={
+            <GameProvider>
+              <GamePage />
+            </GameProvider>
+          }
+        />
+      </Route>
+      <Route path="*" element={<NotFoundPage />} />
+    </Routes>
+  );
+}
+
+export default App;
+```
 
 </details>
 
----
-
-## Brief Overview: React Query
-
-> This section is conceptual — no code changes are needed.
-
-The three hooks you built today solve real problems, but they stop short of what production applications need:
-
-- `useDataLoader` re-fetches from the server every time the component mounts, even if the data has not changed
-- There is no caching: if two components load the same URL, two separate network requests are made
-- There is no background refetching: data shown to the user can become stale while the tab is open
-
-**React Query** (the `@tanstack/react-query` package) solves all of these. Instead of writing `useDataLoader`, you write:
-
-```jsx
-const { data, isLoading, error } = useQuery({
-  queryKey: ['contacts'],
-  queryFn: () => fetch('http://localhost:3001/contacts').then(r => r.json()),
-});
-```
-
-The mental model is almost identical to `useDataLoader`. The differences are what React Query adds on top:
-
-| Capability | `useDataLoader` | React Query |
-|---|---|---|
-| Fetch on mount | Yes | Yes |
-| Cleanup on unmount | Yes (we added it) | Yes |
-| Cache across components | No | Yes |
-| Background refetch | No | Yes |
-| Deduplication of requests | No | Yes |
-| Retry on failure | No | Configurable |
-
-React Query does not replace the skills you practised today. Understanding `useEffect`, the `ignore` flag, and the cleanup pattern is what allows you to use React Query effectively — and debug it when something does not behave as expected.
+**Check:** Navigate to a URL that does not exist, for example `/nonsense`. You should see the 404 page with a working link back to `/`. This should work whether or not you are signed in.
 
 ---
 
-## Bonus Challenges
+## Part 3: Debrief (30 minutes)
 
-These challenges have no provided solution. They are for learners who finish the lab early.
+### Learner Presentations
 
-1. Add a `refetch` function to `useDataLoader`. The caller should be able to call `refetch()` to re-run the fetch without changing the URL. One approach: maintain an internal counter in the dependency array and increment it on `refetch`.
-2. Add an `enabled` option to `useDataLoader`. When `enabled` is `false`, the effect should not run at all. This is useful for lazy loading — fetch only when a condition is met.
-3. Extend `useAuth` to persist the logged-in user to `localStorage`. On mount, read from `localStorage` to restore a previous session. On logout, clear the stored value.
-4. Extend `useDebounce` to accept a third argument, `immediate`. When `immediate` is `true`, the value should update on the first change immediately and debounce only subsequent rapid changes (leading-edge debounce).
+Two volunteers will share their screen and walk through their solution. As you watch, consider:
 
----
+- How did they split `AuthContext` and `GameContext`, and did the two ever need to know about each other?
+- Where did they call `useNavigate` versus return `<Navigate>`, and why?
+- What state did they pass through the redirect back to `LoginPage`?
 
-## Common Pitfalls
+### Instructor Walkthrough
 
-**Forgetting to return the cleanup function from `useDataLoader`**
+After the presentations, the instructor will walk through the reference solution covering:
 
-```js
-// Wrong — ignore is set to true immediately, not on unmount
-useEffect(() => {
-  let ignore = false;
-  fetch(url).then(data => { if (!ignore) setData(data); });
-  ignore = true;
-}, [url]);
-
-// Correct — the cleanup function runs when the component unmounts
-useEffect(() => {
-  let ignore = false;
-  fetch(url).then(data => { if (!ignore) setData(data); });
-  return () => { ignore = true; };
-}, [url]);
-```
-
-**Naming a custom hook without the `use` prefix**
-
-```js
-// Wrong — React cannot enforce hook rules on this function
-function authContext() {
-  return useContext(AuthContext);
-}
-
-// Correct — the 'use' prefix signals to React and linters that this is a hook
-function useAuth() {
-  return useContext(AuthContext);
-}
-```
-
-**Assuming the hook shares state between callers**
-
-```jsx
-// Each component gets its own independent debouncedValue state
-function SearchPanel() {
-  const debouncedQuery = useDebounce(query, 300); // own isolated state
-}
-
-function TagSearchPanel() {
-  const debouncedQuery = useDebounce(query, 300); // own isolated state
-}
-// Typing in one panel does not affect the other
-```
-
-**Calling a hook conditionally**
-
-```jsx
-// Wrong — hooks must be called unconditionally in the same order on every render
-function DataPanel({ enabled }) {
-  if (!enabled) return null;
-  const { data } = useDataLoader(url); // called after an early return: violates rules of hooks
-}
-
-// Correct — call the hook first, then decide what to render
-function DataPanel({ enabled }) {
-  const { data } = useDataLoader(url);
-  if (!enabled) return null;
-  // ...
-}
-```
+1. Why `AuthContext` and `GameContext` are kept as two separate contexts rather than merged into one
+2. `ProtectedRoute` as a layout route with no path segment of its own, wrapping `/game`
+3. The redirect-back pattern: `<Navigate state={{ from: location }}>` on the way out, `location.state?.from?.pathname` on the way back in
+4. Why `GameProvider` wrapping the `/game` route's element means a fresh sign-in always starts a fresh game
+5. The difference between `useNavigate` (called inside an event handler) and `<Navigate>` (returned from render)
+6. Why the `*` catch-all route must be declared last
 
 ---
 
 ## Summary
 
-| Hook | What it encapsulates | Key benefit |
-|---|---|---|
-| `useAuth` | `useContext(AuthContext)` | Single import, error guard, hides context details from consumers |
-| `useDebounce` | `useState` + `useEffect` timeout pattern | Reusable across any input; timing logic written once |
-| `useDataLoader` | Async `fetch` with `ignore` flag cleanup | Correct behaviour is automatic; impossible to forget the cleanup |
+Here is what you practised today:
 
-Custom hooks follow a consistent pattern: they extract repeated or complex stateful logic from component bodies so that each component reads as a clear statement of what it needs, not how it works.
+- **React Router setup**: wrapping an existing single-screen app with `BrowserRouter` and splitting it into named routes
+- **AuthContext**: a context dedicated to "who is logged in," kept separate from the app's own state
+- **ProtectedRoute**: a layout route that checks authentication before rendering `<Outlet />`, redirecting to `/login` otherwise
+- **Redirect-back**: passing the originally requested location through `<Navigate state={{ from }}>` so a visitor lands where they meant to go after signing in
+- **Catch-all routing**: a `*` route declared last, reachable regardless of sign-in state, for any URL that matches nothing else
 
----
-
-## Additional Resources
-
-- [Reusing Logic with Custom Hooks — React documentation](https://react.dev/learn/reusing-logic-with-custom-hooks)
-- [useHooks — collection of production-ready custom hooks](https://usehooks.com/)
-- [TanStack Query (React Query) — Getting Started](https://tanstack.com/query/latest/docs/framework/react/overview)
+In the next lesson (2.11), you will learn form validation and deployment, taking the CRM from a local project to a live, publicly deployed application.

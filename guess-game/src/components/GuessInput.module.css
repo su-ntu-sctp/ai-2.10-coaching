@@ -1,0 +1,40 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.controls {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.input {
+  font-size: 16px;
+  padding: 6px 10px;
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  width: 100px;
+  text-align: center;
+}
+
+.button {
+  font-size: 16px;
+  padding: 6px 16px;
+  border-radius: 5px;
+  border: none;
+  color: white;
+  background: blue;
+  cursor: pointer;
+}
+
+.button:hover {
+  background: navy;
+}
+
+.button:focus {
+  outline: 2px solid navy;
+}

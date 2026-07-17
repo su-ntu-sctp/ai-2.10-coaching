@@ -1,0 +1,16 @@
+.item {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 12px;
+  border-bottom: 1px solid #ccc;
+  font-size: 15px;
+}
+
+.number {
+  font-weight: bold;
+}
+
+.message {
+  color: #555;
+}
