@@ -12,8 +12,8 @@
 By the end of this lesson, you will be able to:
 
 1. **Extract** stateful logic from components into custom hooks to separate concerns and enable reuse
-2. **Implement** `useDebounce` and `useDataLoader` as general-purpose hooks that solve real problems
-3. **Explain** why a missing cleanup function in `useEffect` causes stale data bugs, and how encapsulating the fix in a hook prevents the mistake from recurring
+2. **Implement** `useAuth`, `useDebounce`, and `useDataLoader` as general-purpose hooks that solve real problems
+3. **Explain** why each caller of a custom hook gets its own isolated state, even though the underlying logic is shared
 
 ## Introduction
 
@@ -21,7 +21,7 @@ The theme of Lessons 2.9 and 2.10 is: make it correct, make it fast, make it cle
 
 The tool for this is the custom hook. A custom hook is a plain JavaScript function whose name starts with `use`. It can call built-in hooks (`useState`, `useEffect`, `useContext`, and so on) and return whatever values the caller needs. The key insight is that a custom hook does not share state between callers, each component that calls a hook gets its own isolated state. What is shared is the logic.
 
-Rather than adding to the CRM, you will work with a purpose-built app called `hooks-demo`. It has three panels: an authentication panel, a search panel, and a data panel. Each panel is working but messy. Your job is to refactor each one so that the component describes *what* it needs, and the hook takes care of *how*.
+Rather than adding to the CRM, you will work with a purpose-built app called `hooks-demo`. It has three panels: an authentication panel, a search panel, and a data panel. Each panel is working but messy. Your job is to refactor each one so that the component describes _what_ it needs, and the hook takes care of _how_.
 
 ---
 
@@ -32,10 +32,36 @@ Rather than adding to the CRM, you will work with a purpose-built app called `ho
 Create a new Vite + React project:
 
 ```bash
-npm create vite@latest hooks-demo -- --template react
+npm create vite@latest hooks-demo -- --template react --eslint
 cd hooks-demo
 npm install
 ```
+
+### Adjust the ESLint Config
+
+Open `eslint.config.js` and add a `rules` block to the `**/*.{js,jsx}` configuration object:
+
+```js
+// eslint.config.js
+{
+  files: ['**/*.{js,jsx}'],
+  extends: [
+    js.configs.recommended,
+    reactHooks.configs.flat.recommended,
+    reactRefresh.configs.vite,
+  ],
+  languageOptions: {
+    globals: globals.browser,
+    parserOptions: { ecmaFeatures: { jsx: true } },
+  },
+  rules: {
+    'no-unused-vars': 'warn',
+    'react-refresh/only-export-components': 'off',
+  },
+},
+```
+
+`no-unused-vars` is downgraded to a warning so half-finished refactoring steps do not block the dev server with an error overlay. `react-refresh/only-export-components` is turned off because `AuthContext.jsx` exports both the `AuthProvider` component and the plain `AuthContext` value from the same file, a pattern this rule normally flags.
 
 ### Install json-server
 
@@ -47,18 +73,38 @@ npm install -D json-server
 
 ### Add the Database File
 
-Create `db.json` in the project root:
+Create a `data` folder in the project root, then create `data/db.json` inside it:
 
 ```json
-// db.json
+// data/db.json
 {
   "contacts": [
-    { "id": 1, "name": "Alice Tan", "email": "alice@example.com", "role": "admin" },
+    {
+      "id": 1,
+      "name": "Alice Tan",
+      "email": "alice@example.com",
+      "role": "admin"
+    },
     { "id": 2, "name": "Bob Lim", "email": "bob@example.com", "role": "user" },
-    { "id": 3, "name": "Carol Wong", "email": "carol@example.com", "role": "user" },
-    { "id": 4, "name": "David Chen", "email": "david@example.com", "role": "admin" },
+    {
+      "id": 3,
+      "name": "Carol Wong",
+      "email": "carol@example.com",
+      "role": "user"
+    },
+    {
+      "id": 4,
+      "name": "David Chen",
+      "email": "david@example.com",
+      "role": "admin"
+    },
     { "id": 5, "name": "Eve Ng", "email": "eve@example.com", "role": "user" },
-    { "id": 6, "name": "Frank Ho", "email": "frank@example.com", "role": "user" }
+    {
+      "id": 6,
+      "name": "Frank Ho",
+      "email": "frank@example.com",
+      "role": "user"
+    }
   ],
   "tags": [
     { "id": 1, "label": "React" },
@@ -82,115 +128,16 @@ Open `package.json` and add a `server` script:
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "server": "json-server --watch db.json --port 3001"
+    "server": "json-server --watch data/db.json --port 3001"
   }
 }
 ```
 
 ### Add the Stylesheet
 
-Replace the entire contents of `src/App.css` with the following:
+The Vite boilerplate `index.css` ships with a centred, fixed-width theme that conflicts with the panel layout used in this lesson. Download [`assets/hooks-demo/index.css`](assets/hooks-demo/index.css) and copy it to `src/index.css`, replacing the existing contents. This is a small demo app, so one stylesheet is enough; there is no need for a separate `App.css`.
 
-```css
-/* src/App.css */
-*, *::before, *::after { box-sizing: border-box; }
-
-body {
-  font-family: sans-serif;
-  margin: 0;
-  background: #f8fafc;
-  color: #1a202c;
-}
-
-.app {
-  max-width: 900px;
-  margin: 0 auto;
-  padding: 2rem;
-}
-
-.app h1 {
-  margin-bottom: 2rem;
-  font-size: 1.5rem;
-}
-
-.panels {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 1.5rem;
-}
-
-.panel {
-  background: #fff;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  padding: 1.25rem;
-}
-
-.panel h2 {
-  margin: 0 0 1rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #4a5568;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.auth-panel p { margin: 0.5rem 0; font-size: 0.95rem; }
-
-input[type="text"],
-input[type="password"] {
-  width: 100%;
-  padding: 0.4rem 0.6rem;
-  border: 1px solid #cbd5e0;
-  border-radius: 4px;
-  font-size: 0.9rem;
-  margin-bottom: 0.5rem;
-}
-
-button {
-  padding: 0.4rem 0.9rem;
-  background: #3182ce;
-  color: #fff;
-  border: none;
-  border-radius: 4px;
-  font-size: 0.9rem;
-  cursor: pointer;
-}
-
-button:hover { background: #2b6cb0; }
-
-button.secondary {
-  background: #e2e8f0;
-  color: #4a5568;
-  margin-left: 0.5rem;
-}
-
-button.secondary:hover { background: #cbd5e0; }
-
-.search-box { margin-bottom: 0.75rem; }
-
-.result-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-
-.result-list li {
-  padding: 0.3rem 0;
-  font-size: 0.9rem;
-  border-bottom: 1px solid #f0f0f0;
-}
-
-.result-list li:last-child { border-bottom: none; }
-
-.status {
-  font-size: 0.85rem;
-  color: #718096;
-  margin-top: 0.5rem;
-}
-
-.error { color: #c53030; font-size: 0.9rem; }
-```
+`index.css` is already imported in `src/main.jsx`; no change is needed there.
 
 ### Create the Context and Provider
 
@@ -198,29 +145,29 @@ Create `src/contexts/AuthContext.jsx`:
 
 ```jsx
 // src/contexts/AuthContext.jsx
-import { createContext, useState } from 'react';
+import { createContext, useState } from "react";
 
 export const AuthContext = createContext(null);
 
 const FAKE_USERS = {
-  admin: { name: 'Alice Tan', role: 'admin' },
-  user: { name: 'Bob Lim', role: 'user' },
+  admin: { name: "Alice Tan", role: "admin" },
+  user: { name: "Bob Lim", role: "user" },
 };
 
 export function AuthProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(null);
 
-  function login(username, password) {
-    if (password !== 'password') return false;
+  const login = (username, password) => {
+    if (password !== "password") return false;
     const user = FAKE_USERS[username];
     if (!user) return false;
     setCurrentUser(user);
     return true;
-  }
+  };
 
-  function logout() {
+  const logout = () => {
     setCurrentUser(null);
-  }
+  };
 
   return (
     <AuthContext.Provider value={{ currentUser, login, logout }}>
@@ -234,34 +181,37 @@ This is a simple fake auth system. The only valid password is `"password"`, and 
 
 ### Create the Starter App Shell
 
-Replace `src/App.jsx` with the following. This is the *messy* starting point, all logic is inline. You will refactor it progressively through the lesson:
+Replace `src/App.jsx` with the following. This is the _messy_ starting point, all logic is inline. You will refactor it progressively through the lesson:
 
 ```jsx
 // src/App.jsx
-import './App.css';
-import { useContext, useState, useEffect } from 'react';
-import { AuthContext, AuthProvider } from './contexts/AuthContext';
+import { useContext, useState, useEffect } from "react";
+import { AuthContext, AuthProvider } from "./contexts/AuthContext";
 
 // ─── Auth Panel (messy: reads context directly, no encapsulation) ──────────────
 function AuthPanel() {
   const { currentUser, login, logout } = useContext(AuthContext);
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
 
-  function handleLogin(e) {
+  const handleLogin = (e) => {
     e.preventDefault();
     const ok = login(username, password);
-    if (!ok) setError('Invalid username or password.');
-    else setError('');
-  }
+    if (!ok) setError("Invalid username or password.");
+    else setError("");
+  };
 
   if (currentUser) {
     return (
       <div className="panel auth-panel">
         <h2>Auth</h2>
-        <p>Logged in as <strong>{currentUser.name}</strong></p>
-        <p>Role: <strong>{currentUser.role}</strong></p>
+        <p>
+          Logged in as <strong>{currentUser.name}</strong>
+        </p>
+        <p>
+          Role: <strong>{currentUser.role}</strong>
+        </p>
         <button onClick={logout}>Log out</button>
       </div>
     );
@@ -275,13 +225,13 @@ function AuthPanel() {
           type="text"
           placeholder="Username"
           value={username}
-          onChange={e => setUsername(e.target.value)}
+          onChange={(e) => setUsername(e.target.value)}
         />
         <input
           type="password"
           placeholder="Password"
           value={password}
-          onChange={e => setPassword(e.target.value)}
+          onChange={(e) => setPassword(e.target.value)}
         />
         <button type="submit">Log in</button>
         {error && <p className="error">{error}</p>}
@@ -291,24 +241,21 @@ function AuthPanel() {
   );
 }
 
-// ─── Search Panel (messy: debounce logic inline) ───────────────────────────────
+// ─── Search Panel (messy: no debouncing, filters on every keystroke) ───────────
 const CONTACTS = [
-  'Alice Tan', 'Bob Lim', 'Carol Wong', 'David Chen', 'Eve Ng', 'Frank Ho',
+  "Alice Tan",
+  "Bob Lim",
+  "Carol Wong",
+  "David Chen",
+  "Eve Ng",
+  "Frank Ho",
 ];
 
 function SearchPanel() {
-  const [query, setQuery] = useState('');
-  const [debouncedQuery, setDebouncedQuery] = useState('');
+  const [query, setQuery] = useState("");
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedQuery(query);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [query]);
-
-  const results = CONTACTS.filter(name =>
-    name.toLowerCase().includes(debouncedQuery.toLowerCase())
+  const results = CONTACTS.filter((name) =>
+    name.toLowerCase().includes(query.toLowerCase()),
   );
 
   return (
@@ -319,46 +266,76 @@ function SearchPanel() {
           type="text"
           placeholder="Search contacts..."
           value={query}
-          onChange={e => setQuery(e.target.value)}
+          onChange={(e) => setQuery(e.target.value)}
         />
       </div>
       <ul className="result-list">
-        {results.map(name => <li key={name}>{name}</li>)}
+        {results.map((name) => (
+          <li key={name}>{name}</li>
+        ))}
       </ul>
-      <p className="status">{results.length} result{results.length !== 1 ? 's' : ''}</p>
+      <p className="status">
+        {results.length} result{results.length !== 1 ? "s" : ""}
+      </p>
     </div>
   );
 }
 
-// ─── Data Panel (messy: fetch logic inline, cleanup bug present) ───────────────
+// ─── Data Panel (messy: fetch logic inline) ─────────────────────────────────────
 function DataPanel() {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    setLoading(true);
-    fetch('http://localhost:3001/contacts')
-      .then(r => r.json())
-      .then(json => {
-        setData(json);
-        setLoading(false);
-      })
-      .catch(err => {
-        setError(err.message);
-        setLoading(false);
-      });
+    let ignore = false;
+
+    const loadContacts = async () => {
+      setLoading(true);
+      try {
+        const response = await fetch("http://localhost:3001/contacts");
+        const json = await response.json();
+        if (!ignore) {
+          setData(json);
+          setLoading(false);
+        }
+      } catch (err) {
+        if (!ignore) {
+          setError(err.message);
+          setLoading(false);
+        }
+      }
+    };
+    loadContacts();
+
+    return () => {
+      ignore = true;
+    };
   }, []);
 
-  if (loading) return <div className="panel"><h2>Data</h2><p>Loading...</p></div>;
-  if (error) return <div className="panel"><h2>Data</h2><p className="error">Error: {error}</p></div>;
+  if (loading)
+    return (
+      <div className="panel">
+        <h2>Data</h2>
+        <p>Loading...</p>
+      </div>
+    );
+  if (error)
+    return (
+      <div className="panel">
+        <h2>Data</h2>
+        <p className="error">Error: {error}</p>
+      </div>
+    );
 
   return (
     <div className="panel">
       <h2>Data</h2>
       <ul className="result-list">
-        {data.map(contact => (
-          <li key={contact.id}>{contact.name} — {contact.role}</li>
+        {data.map((contact) => (
+          <li key={contact.id}>
+            {contact.name} — {contact.role}
+          </li>
         ))}
       </ul>
     </div>
@@ -416,29 +393,23 @@ Look at `AuthPanel` in `App.jsx`. It calls `useContext(AuthContext)` directly. E
 2. Import `useContext` from React
 3. Call `useContext(AuthContext)` and remember the correct context object
 
-If you rename `AuthContext`, add a guard, or change the shape of the context value, you must update every consumer. There is also no protection against calling `useContext(AuthContext)` outside the `<AuthProvider>`, you receive `null` back with no explanation.
+If you rename `AuthContext` or move it to a different file, you must update the imports in every consumer. There is also no protection against calling `useContext(AuthContext)` outside the `<AuthProvider>`, you receive `null` back with no explanation.
 
-A custom hook fixes all of this.
+A custom hook fixes both problems: it becomes the single place that imports `AuthContext`, and it can guard against missing providers.
 
 ### Create `useAuth`
 
-Create the folder and file:
-
-```bash
-mkdir -p src/hooks
-```
-
-Create `src/hooks/useAuth.js`:
+Create a `src/hooks` folder, then create `src/hooks/useAuth.js` inside it:
 
 ```js
 // src/hooks/useAuth.js
-import { useContext } from 'react';
-import { AuthContext } from '../contexts/AuthContext';
+import { useContext } from "react";
+import { AuthContext } from "../contexts/AuthContext";
 
 export function useAuth() {
   const context = useContext(AuthContext);
   if (context === null) {
-    throw new Error('useAuth must be used inside <AuthProvider>');
+    throw new Error("useAuth must be used inside <AuthProvider>");
   }
   return context;
 }
@@ -457,8 +428,8 @@ In `src/App.jsx`, update the imports and `AuthPanel` to use the hook:
 ```jsx
 // src/App.jsx
 // Before — two imports required for auth
-import { useContext, useState, useEffect } from 'react';
-import { AuthContext, AuthProvider } from './contexts/AuthContext';
+import { useContext, useState, useEffect } from "react";
+import { AuthContext, AuthProvider } from "./contexts/AuthContext";
 
 function AuthPanel() {
   const { currentUser, login, logout } = useContext(AuthContext);
@@ -469,9 +440,9 @@ function AuthPanel() {
 ```jsx
 // src/App.jsx
 // After — one hook import, no mention of AuthContext
-import { useState, useEffect } from 'react';
-import { AuthProvider } from './contexts/AuthContext';
-import { useAuth } from './hooks/useAuth';
+import { useState, useEffect } from "react";
+import { AuthProvider } from "./contexts/AuthContext";
+import { useAuth } from "./hooks/useAuth";
 
 function AuthPanel() {
   const { currentUser, login, logout } = useAuth();
@@ -483,7 +454,7 @@ The rest of `AuthPanel` is unchanged. Test by logging in and out, behaviour shou
 
 > **What the hook does not change**
 >
-> `useAuth` does not add new functionality and does not create new state. Each component that calls `useAuth()` reads the same context value from the same `<AuthProvider>`. The hook is purely an encapsulation, it hides *where* the value comes from so that consuming components only need to know *what* they get back.
+> `useAuth` does not add new functionality and does not create new state. Each component that calls `useAuth()` reads the same context value from the same `<AuthProvider>`. The hook is purely an encapsulation, it hides _where_ the value comes from so that consuming components only need to know _what_ they get back.
 
 ### Verify the Error Guard
 
@@ -495,77 +466,32 @@ This guard would be impossible to write without the custom hook, callers using `
 
 ## Part 2: `useDebounce` — Derived State with a Delay (30 minutes)
 
-### The Problem
+### Without Debouncing
 
-Look at `SearchPanel` in `App.jsx`. The debounce logic takes up seven lines:
+Look at `SearchPanel` in `App.jsx`. It currently filters on every keystroke, with no debouncing at all:
 
 ```jsx
 // src/App.jsx
-const [debouncedQuery, setDebouncedQuery] = useState('');
+const [query, setQuery] = useState("");
 
-useEffect(() => {
-  const timer = setTimeout(() => {
-    setDebouncedQuery(query);
-  }, 300);
-  return () => clearTimeout(timer);
-}, [query]);
+const results = CONTACTS.filter((name) =>
+  name.toLowerCase().includes(query.toLowerCase()),
+);
 ```
 
-This pattern is correct, but it is entangled with `SearchPanel`'s other responsibilities. If a second component ever needs debouncing, a tag search, a live-filter input, you would duplicate these seven lines.
-
-A custom hook extracts the pattern so any component can write:
-
-```jsx
-const debouncedQuery = useDebounce(query, 300);
-```
+Every keystroke updates `query`, which re-renders `SearchPanel` and re-runs `.filter()` over the entire `CONTACTS` list, immediately, on every character. Typing "carol" filters the list five times: once for "c", once for "ca", once for "car", and so on, most of it wasted work the user never sees because the next keystroke arrives before they can read it. This gets worse in Part 3, where the filter is replaced by a network request, on every character typed, that would mean firing off five HTTP requests in a fraction of a second, most of them abandoned before they even return.
 
 ### How Debouncing Works
 
-Every time `query` changes (on each keystroke), the `useEffect` runs. It sets a 300ms timer. If `query` changes again before the timer fires, the user keeps typing, the cleanup function cancels the old timer and a new one starts. The `debouncedQuery` state only updates after the user pauses for 300ms.
+Debouncing means waiting for a pause in activity before reacting to it. Instead of showing a new filtered result on every keystroke, `SearchPanel` should wait until the user stops typing for a short moment, then update what is shown.
 
-The result: the filtered list does not update on every keystroke, only when the user stops typing. For a search that calls an API, this prevents a network request on every character.
-
-### Create `useDebounce`
-
-Create `src/hooks/useDebounce.js`:
-
-```js
-// src/hooks/useDebounce.js
-import { useState, useEffect } from 'react';
-
-export function useDebounce(value, delay) {
-  const [debouncedValue, setDebouncedValue] = useState(value);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedValue(value);
-    }, delay);
-    return () => clearTimeout(timer);
-  }, [value, delay]);
-
-  return debouncedValue;
-}
-```
-
-The hook accepts any `value` and a `delay` in milliseconds. It maintains its own `debouncedValue` state, schedules an update after `delay` ms, and cancels the previous timer if `value` changes before the delay elapses.
-
-### Update `SearchPanel`
-
-Add the import at the top of `App.jsx`:
+Update `SearchPanel` to introduce a second piece of state, `debouncedQuery`, that only catches up to `query` after a pause:
 
 ```jsx
 // src/App.jsx
-import { useDebounce } from './hooks/useDebounce';
-```
-
-Then simplify `SearchPanel`:
-
-```jsx
-// src/App.jsx
-// Before — seven lines of timing logic inside the component
 function SearchPanel() {
-  const [query, setQuery] = useState('');
-  const [debouncedQuery, setDebouncedQuery] = useState('');
+  const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -574,8 +500,89 @@ function SearchPanel() {
     return () => clearTimeout(timer);
   }, [query]);
 
-  const results = CONTACTS.filter(name =>
-    name.toLowerCase().includes(debouncedQuery.toLowerCase())
+  const results = CONTACTS.filter((name) =>
+    name.toLowerCase().includes(debouncedQuery.toLowerCase()),
+  );
+  // ...
+}
+```
+
+Here is what the added lines do:
+
+1. Every time `query` changes (on each keystroke), the `useEffect` runs.
+2. It sets a 300ms timer that will copy `query` into `debouncedQuery`.
+3. If `query` changes again before the timer fires, the user is still typing, the cleanup function cancels the old timer before the new one starts.
+4. `debouncedQuery` only updates once the user pauses for 300ms without typing.
+
+The result: `results` is now derived from `debouncedQuery`, not `query`, so the filtered list only *updates* once the user pauses. `SearchPanel` still re-renders, and `.filter()` still runs, on every keystroke, that part is unavoidable, since the input needs `query` to update immediately for the text box to feel responsive. What debouncing prevents is the *visible* result changing on every keystroke: `debouncedQuery` stays the same across those in-between renders, so `.filter()` keeps returning the same list until the user pauses for 300ms, at which point it runs once more against the new value. This is what actually matters in Part 3, where the filter is replaced by a network request: renders are cheap, but a request fired on every keystroke is not.
+
+### The Problem with Writing This Inline
+
+This pattern is correct, but it is entangled with `SearchPanel`'s other responsibilities. If a second component ever needs debouncing, a tag search, a live-filter input, you would duplicate these seven lines, including the easy-to-forget cleanup.
+
+A custom hook extracts the pattern so any component can write:
+
+```jsx
+const debouncedQuery = useDebounce(query);
+```
+
+### Create `useDebounce`
+
+Create `src/hooks/useDebounce.js`:
+
+```js
+// src/hooks/useDebounce.js
+import { useState, useEffect } from "react";
+
+const DELAY = 300;
+
+export function useDebounce(value) {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedValue(value);
+    }, DELAY);
+    return () => clearTimeout(timer);
+  }, [value]);
+
+  return debouncedValue;
+}
+```
+
+The hook accepts any `value` and debounces it by a fixed 300ms. It maintains its own `debouncedValue` state, schedules an update after the delay, and cancels the previous timer if `value` changes before the delay elapses.
+
+> **Debouncing tracks time, not distinct values**
+>
+> `useDebounce` re-triggers its timer whenever `value` changes, even if the new value is the same as one it already emitted. Type "a", wait a moment (the filter runs on "a"), then type "o" and delete it before the next pause, the filter runs on "a" again, because from the hook's point of view this is just another change event. The hook has no memory of values it already returned, only of the most recent one. This is a reasonable trade-off: comparing every new value against every previously emitted value would add complexity for a case that rarely matters in practice, a user retyping the exact same character sequence within a fraction of a second.
+
+### Update `SearchPanel`
+
+Add the import at the top of `App.jsx`:
+
+```jsx
+// src/App.jsx
+import { useDebounce } from "./hooks/useDebounce";
+```
+
+Then simplify `SearchPanel`:
+
+```jsx
+// src/App.jsx
+// Before — seven lines of timing logic inside the component
+function SearchPanel() {
+  const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedQuery(query);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const results = CONTACTS.filter((name) =>
+    name.toLowerCase().includes(debouncedQuery.toLowerCase()),
   );
   // ...
 }
@@ -585,11 +592,11 @@ function SearchPanel() {
 // src/App.jsx
 // After — intent is clear, mechanism is hidden
 function SearchPanel() {
-  const [query, setQuery] = useState('');
-  const debouncedQuery = useDebounce(query, 300);
+  const [query, setQuery] = useState("");
+  const debouncedQuery = useDebounce(query);
 
-  const results = CONTACTS.filter(name =>
-    name.toLowerCase().includes(debouncedQuery.toLowerCase())
+  const results = CONTACTS.filter((name) =>
+    name.toLowerCase().includes(debouncedQuery.toLowerCase()),
   );
   // ...
 }
@@ -601,11 +608,11 @@ The component now reads as a clear statement of intent: "I have a query. Its deb
 
 > **Each caller gets its own state**
 >
-> If two components both call `useDebounce(query, 300)`, each gets its own independent `debouncedValue` state. Calling a hook is like calling a function, the state lives inside the component instance that called it, not inside the hook file. What is shared is the logic, not the data.
+> If two components both call `useDebounce(query)`, each gets its own independent `debouncedValue` state. Calling a hook is like calling a function, the state lives inside the component instance that called it, not inside the hook file. What is shared is the logic, not the data.
 
 ---
 
-### Activity: Add a Tag Search Panel (10 minutes)
+### Activity (Optional): Add a Tag Search Panel (10 minutes)
 
 Now that `useDebounce` exists, add a second search panel for the tag list without writing the debounce logic again.
 
@@ -619,13 +626,20 @@ Add this constant near the top of `App.jsx`, alongside `CONTACTS`:
 
 ```js
 // src/App.jsx
-const TAGS = ['React', 'TypeScript', 'Testing', 'Performance', 'Custom Hooks', 'React Query'];
+const TAGS = [
+  "React",
+  "TypeScript",
+  "Testing",
+  "Performance",
+  "Custom Hooks",
+  "React Query",
+];
 ```
 
 **Hints:**
 
 1. Copy the structure of `SearchPanel`, the tag panel is nearly identical
-2. Call `useDebounce(query, 300)` the same way; the hook works for any string value
+2. Call `useDebounce(query)` the same way; the hook works for any string value
 3. Filter `TAGS` with `.toLowerCase().includes(...)` the same way contacts are filtered
 4. Add `<TagSearchPanel />` to the `.panels` div in `AppContent`
 
@@ -634,14 +648,21 @@ const TAGS = ['React', 'TypeScript', 'Testing', 'Performance', 'Custom Hooks', '
 
 ```jsx
 // src/App.jsx
-const TAGS = ['React', 'TypeScript', 'Testing', 'Performance', 'Custom Hooks', 'React Query'];
+const TAGS = [
+  "React",
+  "TypeScript",
+  "Testing",
+  "Performance",
+  "Custom Hooks",
+  "React Query",
+];
 
 function TagSearchPanel() {
-  const [query, setQuery] = useState('');
-  const debouncedQuery = useDebounce(query, 300);
+  const [query, setQuery] = useState("");
+  const debouncedQuery = useDebounce(query);
 
-  const results = TAGS.filter(tag =>
-    tag.toLowerCase().includes(debouncedQuery.toLowerCase())
+  const results = TAGS.filter((tag) =>
+    tag.toLowerCase().includes(debouncedQuery.toLowerCase()),
   );
 
   return (
@@ -652,13 +673,17 @@ function TagSearchPanel() {
           type="text"
           placeholder="Search tags..."
           value={query}
-          onChange={e => setQuery(e.target.value)}
+          onChange={(e) => setQuery(e.target.value)}
         />
       </div>
       <ul className="result-list">
-        {results.map(tag => <li key={tag}>{tag}</li>)}
+        {results.map((tag) => (
+          <li key={tag}>{tag}</li>
+        ))}
       </ul>
-      <p className="status">{results.length} result{results.length !== 1 ? 's' : ''}</p>
+      <p className="status">
+        {results.length} result{results.length !== 1 ? "s" : ""}
+      </p>
     </div>
   );
 }
@@ -670,121 +695,50 @@ Add `<TagSearchPanel />` inside the `.panels` div in `AppContent`. The `useDebou
 
 ---
 
-## Part 3: `useDataLoader` — Async Fetch with Cleanup (40 minutes)
+## Part 3: `useDataLoader` — Extracting an Async Fetch (40 minutes)
 
 ### The Problem
 
-Look at `DataPanel` in `App.jsx`. It fetches data inside a `useEffect`. The code looks correct, but it has a silent bug:
-
-```jsx
-// src/App.jsx
-useEffect(() => {
-  setLoading(true);
-  fetch('http://localhost:3001/contacts')
-    .then(r => r.json())
-    .then(json => {
-      setData(json);      // ← called even if the component has unmounted
-      setLoading(false);  // ← same
-    })
-    .catch(err => {
-      setError(err.message);
-      setLoading(false);
-    });
-}, []);
-```
-
-The `useEffect` starts a network request. If the component unmounts before the request finishes, for example, the user navigates away, the `.then()` callback still runs and calls `setData` on a component that no longer exists. In a fast network this is harmless. On a slow network, or when the URL can change (if `url` were a dependency), this causes stale data: a slow earlier request resolves after a fast later one, overwriting the correct result with outdated data.
-
-### Demonstrate the Bug
-
-To see the scenario, update `DataPanel`'s `useEffect` to simulate a slow fetch:
-
-```jsx
-// src/App.jsx
-useEffect(() => {
-  setLoading(true);
-  setTimeout(() => {
-    fetch('http://localhost:3001/contacts')
-      .then(r => r.json())
-      .then(json => {
-        setData(json);
-        setLoading(false);
-      });
-  }, 3000);
-}, []);
-```
-
-Make `DataPanel` conditionally renderable. Update `AppContent` with a toggle button:
-
-```jsx
-// src/App.jsx
-function AppContent() {
-  const [showData, setShowData] = useState(true);
-
-  return (
-    <div className="app">
-      <h1>hooks-demo</h1>
-      <button onClick={() => setShowData(s => !s)} className="secondary">
-        Toggle Data Panel
-      </button>
-      <div className="panels">
-        <AuthPanel />
-        <SearchPanel />
-        {showData && <DataPanel />}
-      </div>
-    </div>
-  );
-}
-```
-
-Reload the page. Click Toggle to hide the panel while the 3-second delay is running. After 3 seconds, check the browser console, you will see the React warning: `"Warning: Can't perform a React state update on an unmounted component"`.
-
-Remove the `setTimeout` wrapper before continuing. The real fix is next.
-
-### Fix the Bug with a Cleanup Flag
-
-The standard fix uses an `ignore` flag. Update `DataPanel`'s `useEffect`:
+Look at `DataPanel` in `App.jsx`. It fetches data inside a `useEffect`:
 
 ```jsx
 // src/App.jsx
 useEffect(() => {
   let ignore = false;
-  setLoading(true);
-  fetch('http://localhost:3001/contacts')
-    .then(r => r.json())
-    .then(json => {
+
+  const loadContacts = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch("http://localhost:3001/contacts");
+      const json = await response.json();
       if (!ignore) {
         setData(json);
         setLoading(false);
       }
-    })
-    .catch(err => {
+    } catch (err) {
       if (!ignore) {
         setError(err.message);
         setLoading(false);
       }
-    });
+    }
+  };
+  loadContacts();
+
   return () => {
     ignore = true;
   };
 }, []);
 ```
 
-The cleanup function `() => { ignore = true; }` runs when the component unmounts, or when the dependency array value changes. After that, the `.then()` callback checks `ignore` before calling `setState` and skips the update if the component is no longer mounted.
+This is a lot of code for one component to carry, and it must be written again every time another component fetches data, a tags list, an orders list. Extracting it into a hook makes it reusable, the same way `useDebounce` made the timer pattern reusable.
 
-> **Why `ignore` and not `AbortController`?**
->
-> `AbortController` cancels the in-flight network request, which is more efficient. The `ignore` flag is simpler to read and teach. Both are correct. `AbortController` is the production preference; `ignore` is a valid first step and the easier concept to reason about.
-
-### Extract the Fix into `useDataLoader`
-
-The `ignore` flag pattern is correct, but it must now be written every time data is fetched. If a developer forgets it in one place, the bug comes back. Extracting it into a hook makes the fix automatic for every caller.
+### Create `useDataLoader`
 
 Create `src/hooks/useDataLoader.js`:
 
 ```js
 // src/hooks/useDataLoader.js
-import { useState, useEffect } from 'react';
+import { useState, useEffect } from "react";
 
 export function useDataLoader(url) {
   const [data, setData] = useState([]);
@@ -793,26 +747,26 @@ export function useDataLoader(url) {
 
   useEffect(() => {
     let ignore = false;
-    setLoading(true);
-    setError(null);
 
-    fetch(url)
-      .then(r => {
-        if (!r.ok) throw new Error(`Request failed: ${r.status}`);
-        return r.json();
-      })
-      .then(json => {
+    const loadData = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+        const json = await response.json();
         if (!ignore) {
           setData(json);
           setLoading(false);
         }
-      })
-      .catch(err => {
+      } catch (err) {
         if (!ignore) {
           setError(err.message);
           setLoading(false);
         }
-      });
+      }
+    };
+    loadData();
 
     return () => {
       ignore = true;
@@ -834,14 +788,14 @@ Add the import at the top of `App.jsx`:
 
 ```jsx
 // src/App.jsx
-import { useDataLoader } from './hooks/useDataLoader';
+import { useDataLoader } from "./hooks/useDataLoader";
 ```
 
 Then replace the inline fetch logic:
 
 ```jsx
 // src/App.jsx
-// Before — 18 lines of boilerplate
+// Before — 21 lines of boilerplate
 function DataPanel() {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -849,22 +803,54 @@ function DataPanel() {
 
   useEffect(() => {
     let ignore = false;
-    setLoading(true);
-    fetch('http://localhost:3001/contacts')
-      .then(r => r.json())
-      .then(json => { if (!ignore) { setData(json); setLoading(false); } })
-      .catch(err => { if (!ignore) { setError(err.message); setLoading(false); } });
-    return () => { ignore = true; };
+
+    const loadContacts = async () => {
+      setLoading(true);
+      try {
+        const response = await fetch("http://localhost:3001/contacts");
+        const json = await response.json();
+        if (!ignore) {
+          setData(json);
+          setLoading(false);
+        }
+      } catch (err) {
+        if (!ignore) {
+          setError(err.message);
+          setLoading(false);
+        }
+      }
+    };
+    loadContacts();
+
+    return () => {
+      ignore = true;
+    };
   }, []);
 
-  if (loading) return <div className="panel"><h2>Data</h2><p>Loading...</p></div>;
-  if (error) return <div className="panel"><h2>Data</h2><p className="error">Error: {error}</p></div>;
+  if (loading)
+    return (
+      <div className="panel">
+        <h2>Data</h2>
+        <p>Loading...</p>
+      </div>
+    );
+  if (error)
+    return (
+      <div className="panel">
+        <h2>Data</h2>
+        <p className="error">Error: {error}</p>
+      </div>
+    );
 
   return (
     <div className="panel">
       <h2>Data</h2>
       <ul className="result-list">
-        {data.map(contact => <li key={contact.id}>{contact.name} — {contact.role}</li>)}
+        {data.map((contact) => (
+          <li key={contact.id}>
+            {contact.name} — {contact.role}
+          </li>
+        ))}
       </ul>
     </div>
   );
@@ -875,17 +861,33 @@ function DataPanel() {
 // src/App.jsx
 // After — one line of state, then rendering
 function DataPanel() {
-  const { data, loading, error } = useDataLoader('http://localhost:3001/contacts');
+  const { data, loading, error } = useDataLoader(
+    "http://localhost:3001/contacts",
+  );
 
-  if (loading) return <div className="panel"><h2>Data</h2><p>Loading...</p></div>;
-  if (error) return <div className="panel"><h2>Data</h2><p className="error">Error: {error}</p></div>;
+  if (loading)
+    return (
+      <div className="panel">
+        <h2>Data</h2>
+        <p>Loading...</p>
+      </div>
+    );
+  if (error)
+    return (
+      <div className="panel">
+        <h2>Data</h2>
+        <p className="error">Error: {error}</p>
+      </div>
+    );
 
   return (
     <div className="panel">
       <h2>Data</h2>
       <ul className="result-list">
-        {data.map(contact => (
-          <li key={contact.id}>{contact.name} — {contact.role}</li>
+        {data.map((contact) => (
+          <li key={contact.id}>
+            {contact.name} — {contact.role}
+          </li>
         ))}
       </ul>
     </div>
@@ -899,7 +901,7 @@ You can also tidy up the React import, `useEffect` is no longer used directly in
 
 ---
 
-### Activity: Add a Tags Data Panel (10 minutes)
+### Activity (Optional): Add a Tags Data Panel (10 minutes)
 
 `useDataLoader` can load any URL. Add a panel that loads tags from json-server.
 
@@ -924,16 +926,28 @@ Add `<TagsDataPanel />` to the `.panels` grid in `AppContent`.
 ```jsx
 // src/App.jsx
 function TagsDataPanel() {
-  const { data, loading, error } = useDataLoader('http://localhost:3001/tags');
+  const { data, loading, error } = useDataLoader("http://localhost:3001/tags");
 
-  if (loading) return <div className="panel"><h2>Tags (API)</h2><p>Loading...</p></div>;
-  if (error) return <div className="panel"><h2>Tags (API)</h2><p className="error">Error: {error}</p></div>;
+  if (loading)
+    return (
+      <div className="panel">
+        <h2>Tags (API)</h2>
+        <p>Loading...</p>
+      </div>
+    );
+  if (error)
+    return (
+      <div className="panel">
+        <h2>Tags (API)</h2>
+        <p className="error">Error: {error}</p>
+      </div>
+    );
 
   return (
     <div className="panel">
       <h2>Tags (API)</h2>
       <ul className="result-list">
-        {data.map(tag => (
+        {data.map((tag) => (
           <li key={tag.id}>{tag.label}</li>
         ))}
       </ul>
@@ -948,7 +962,7 @@ Both `DataPanel` and `TagsDataPanel` use `useDataLoader`. Each gets its own inde
 
 ---
 
-## Brief Overview: React Query
+## Brief Overview: TanStack Query
 
 > This section is conceptual, no code changes are needed.
 
@@ -958,60 +972,41 @@ The three hooks you built today solve real problems, but they stop short of what
 - There is no caching: if two components load the same URL, two separate network requests are made
 - There is no background refetching: data shown to the user can become stale while the tab is open
 
-**React Query** (the `@tanstack/react-query` package) solves all of these. Instead of writing `useDataLoader`, you write:
+**[TanStack Query](https://tanstack.com/query/latest)** (the `@tanstack/react-query` package, formerly known as React Query) solves all of these. Instead of writing `useDataLoader`, you write:
 
 ```jsx
 const { data, isLoading, error } = useQuery({
-  queryKey: ['contacts'],
-  queryFn: () => fetch('http://localhost:3001/contacts').then(r => r.json()),
+  queryKey: ["contacts"],
+  queryFn: async () => {
+    const response = await fetch("http://localhost:3001/contacts");
+    return response.json();
+  },
 });
 ```
 
-The mental model is almost identical to `useDataLoader`. The differences are what React Query adds on top:
+The mental model is almost identical to `useDataLoader`. The differences are what TanStack Query adds on top:
 
-| Capability | `useDataLoader` | React Query |
-|---|---|---|
-| Fetch on mount | Yes | Yes |
-| Cleanup on unmount | Yes (we added it) | Yes |
-| Cache across components | No | Yes |
-| Background refetch | No | Yes |
-| Deduplication of requests | No | Yes |
-| Retry on failure | No | Configurable |
+| Capability                | `useDataLoader`   | TanStack Query |
+| ------------------------- | ----------------- | -------------- |
+| Fetch on mount            | Yes               | Yes            |
+| Cleanup on unmount        | Yes (we added it) | Yes            |
+| Cache across components   | No                | Yes            |
+| Background refetch        | No                | Yes            |
+| Deduplication of requests | No                | Yes            |
+| Retry on failure          | No                | Configurable   |
 
-React Query does not replace the skills you practised today. Understanding `useEffect`, the `ignore` flag, and the cleanup pattern is what allows you to use React Query effectively, and debug it when something does not behave as expected.
+What each of these means in practice:
 
----
+- **Cache across components.** `useDataLoader('http://localhost:3001/contacts')` fetches fresh data every time a new component calls it, even if another component on the same page already fetched the same URL a second ago. TanStack Query keys its cache by `queryKey`, so a second component calling `useQuery({ queryKey: ['contacts'], ... })` reads the existing cached result immediately instead of firing a new request.
+- **Background refetch.** With `useDataLoader`, once data has loaded, it stays on screen exactly as it was fetched, even if the user leaves the browser tab open for an hour and the underlying data changes on the server. TanStack Query can automatically refetch in the background, for example when the browser tab regains focus or the network reconnects, and swap in the new data without the user having to reload the page.
+- **Deduplication of requests.** If three components mount at the same time and all call `useDataLoader` with the same URL, three separate `fetch` calls go out. TanStack Query recognises that three `useQuery` calls share the same `queryKey` within a short window and merges them into a single network request, sharing the one response across all three.
+- **Retry on failure.** `useDataLoader` calls `setError` once and stops on the first failed request; the caller has to build its own retry logic. TanStack Query can automatically retry a failed request a configurable number of times, with a configurable delay between attempts, before it gives up and reports an error.
 
-## Bonus Challenges
-
-These challenges have no provided solution. They are for learners who finish the lab early.
-
-1. Add a `refetch` function to `useDataLoader`. The caller should be able to call `refetch()` to re-run the fetch without changing the URL. One approach: maintain an internal counter in the dependency array and increment it on `refetch`.
-2. Add an `enabled` option to `useDataLoader`. When `enabled` is `false`, the effect should not run at all. This is useful for lazy loading, fetch only when a condition is met.
-3. Extend `useAuth` to persist the logged-in user to `localStorage`. On mount, read from `localStorage` to restore a previous session. On logout, clear the stored value.
-4. Extend `useDebounce` to accept a third argument, `immediate`. When `immediate` is `true`, the value should update on the first change immediately and debounce only subsequent rapid changes (leading-edge debounce).
+TanStack Query does not replace the skills you practised today. Understanding `useEffect`, dependency arrays, and how a custom hook wraps them is what allows you to use TanStack Query effectively, and debug it when something does not behave as expected. See the [TanStack Query documentation](https://tanstack.com/query/latest/docs/framework/react/overview) to learn more.
 
 ---
 
 ## Common Pitfalls
-
-**Forgetting to return the cleanup function from `useDataLoader`**
-
-```js
-// Wrong — ignore is set to true immediately, not on unmount
-useEffect(() => {
-  let ignore = false;
-  fetch(url).then(data => { if (!ignore) setData(data); });
-  ignore = true;
-}, [url]);
-
-// Correct — the cleanup function runs when the component unmounts
-useEffect(() => {
-  let ignore = false;
-  fetch(url).then(data => { if (!ignore) setData(data); });
-  return () => { ignore = true; };
-}, [url]);
-```
 
 **Naming a custom hook without the `use` prefix**
 
@@ -1032,11 +1027,11 @@ function useAuth() {
 ```jsx
 // Each component gets its own independent debouncedValue state
 function SearchPanel() {
-  const debouncedQuery = useDebounce(query, 300); // own isolated state
+  const debouncedQuery = useDebounce(query); // own isolated state
 }
 
 function TagSearchPanel() {
-  const debouncedQuery = useDebounce(query, 300); // own isolated state
+  const debouncedQuery = useDebounce(query); // own isolated state
 }
 // Typing in one panel does not affect the other
 ```
@@ -1062,11 +1057,11 @@ function DataPanel({ enabled }) {
 
 ## Summary
 
-| Hook | What it encapsulates | Key benefit |
-|---|---|---|
-| `useAuth` | `useContext(AuthContext)` | Single import, error guard, hides context details from consumers |
-| `useDebounce` | `useState` + `useEffect` timeout pattern | Reusable across any input; timing logic written once |
-| `useDataLoader` | Async `fetch` with `ignore` flag cleanup | Correct behaviour is automatic; impossible to forget the cleanup |
+| Hook            | What it encapsulates                     | Key benefit                                                      |
+| --------------- | ---------------------------------------- | ---------------------------------------------------------------- |
+| `useAuth`       | `useContext(AuthContext)`                | Single import, error guard, hides context details from consumers |
+| `useDebounce`   | `useState` + `useEffect` timeout pattern | Reusable across any input; timing logic written once             |
+| `useDataLoader` | Async `fetch`, loading, and error state   | Reusable across any URL; fetch logic written once                |
 
 Custom hooks follow a consistent pattern: they extract repeated or complex stateful logic from component bodies so that each component reads as a clear statement of what it needs, not how it works.
 
@@ -1076,4 +1071,4 @@ Custom hooks follow a consistent pattern: they extract repeated or complex state
 
 - [Reusing Logic with Custom Hooks — React documentation](https://react.dev/learn/reusing-logic-with-custom-hooks)
 - [useHooks — collection of production-ready custom hooks](https://usehooks.com/)
-- [TanStack Query (React Query) — Getting Started](https://tanstack.com/query/latest/docs/framework/react/overview)
+- [TanStack Query — Getting Started](https://tanstack.com/query/latest/docs/framework/react/overview)
