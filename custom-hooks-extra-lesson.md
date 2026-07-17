@@ -185,7 +185,7 @@ Replace `src/App.jsx` with the following. This is the _messy_ starting point, al
 
 ```jsx
 // src/App.jsx
-import { useContext, useState, useEffect } from "react";
+import { useContext, useState, useEffect, useMemo } from "react";
 import { AuthContext, AuthProvider } from "./contexts/AuthContext";
 
 // ─── Auth Panel (messy: reads context directly, no encapsulation) ──────────────
@@ -241,7 +241,7 @@ function AuthPanel() {
   );
 }
 
-// ─── Search Panel (messy: no debouncing, filters on every keystroke) ───────────
+// ─── Search Panel (messy: no debouncing, re-filters on every keystroke) ────────
 const CONTACTS = [
   "Alice Tan",
   "Bob Lim",
@@ -249,13 +249,31 @@ const CONTACTS = [
   "David Chen",
   "Eve Ng",
   "Frank Ho",
+  "Grace Koh",
+  "Hassan Ibrahim",
+  "Ivan Teo",
+  "Keith Tan",
+  "Karen Yeo",
+  "Leon Goh",
+  "Mei Lin Foo",
+  "Nathan Seah",
+  "Olivia Png",
+  "Priya Nair",
+  "Quentin Tan",
+  "Rachel Sim",
+  "Jeff Wee",
+  "Tricia Lau",
 ];
 
 function SearchPanel() {
   const [query, setQuery] = useState("");
 
-  const results = CONTACTS.filter((name) =>
-    name.toLowerCase().includes(query.toLowerCase()),
+  const results = useMemo(
+    () =>
+      CONTACTS.filter((name) =>
+        name.toLowerCase().includes(query.toLowerCase()),
+      ),
+    [query],
   );
 
   return (
@@ -474,12 +492,18 @@ Look at `SearchPanel` in `App.jsx`. It currently filters on every keystroke, wit
 // src/App.jsx
 const [query, setQuery] = useState("");
 
-const results = CONTACTS.filter((name) =>
-  name.toLowerCase().includes(query.toLowerCase()),
+const results = useMemo(
+  () =>
+    CONTACTS.filter((name) => name.toLowerCase().includes(query.toLowerCase())),
+  [query],
 );
 ```
 
-Every keystroke updates `query`, which re-renders `SearchPanel` and re-runs `.filter()` over the entire `CONTACTS` list, immediately, on every character. Typing "carol" filters the list five times: once for "c", once for "ca", once for "car", and so on, most of it wasted work the user never sees because the next keystroke arrives before they can read it. This gets worse in Part 3, where the filter is replaced by a network request, on every character typed, that would mean firing off five HTTP requests in a fraction of a second, most of them abandoned before they even return.
+> **Assume this filter is expensive**
+>
+> `CONTACTS` here only has twenty entries, so `.filter()` finishes in well under a millisecond no matter how often it runs. In a real application this list could hold thousands of records, or the match itself could be a heavier operation, fuzzy matching, scoring, sorting by relevance, rather than a plain substring check. For the rest of this section, assume `CONTACTS` is large enough, or the comparison expensive enough, that recomputing `results` on every keystroke would be noticeably wasteful. The `useMemo` above is what makes that cost real and measurable: it only recomputes `results` when its dependency, `query`, changes, so tying it to the right value is what actually controls how often the expensive work runs.
+
+Every keystroke updates `query`. Because `query` is `useMemo`'s dependency, `results` is recomputed on every single character. Typing "carol" recomputes it five times: once for "c", once for "ca", once for "car", and so on, most of it wasted work the user never sees because the next keystroke arrives before they can read it. This gets worse in Part 3, where the filter is replaced by a network request, on every character typed, that would mean firing off five HTTP requests in a fraction of a second, most of them abandoned before they even return.
 
 ### How Debouncing Works
 
@@ -500,8 +524,12 @@ function SearchPanel() {
     return () => clearTimeout(timer);
   }, [query]);
 
-  const results = CONTACTS.filter((name) =>
-    name.toLowerCase().includes(debouncedQuery.toLowerCase()),
+  const results = useMemo(
+    () =>
+      CONTACTS.filter((name) =>
+        name.toLowerCase().includes(debouncedQuery.toLowerCase()),
+      ),
+    [debouncedQuery],
   );
   // ...
 }
@@ -514,7 +542,7 @@ Here is what the added lines do:
 3. If `query` changes again before the timer fires, the user is still typing, the cleanup function cancels the old timer before the new one starts.
 4. `debouncedQuery` only updates once the user pauses for 300ms without typing.
 
-The result: `results` is now derived from `debouncedQuery`, not `query`, so the filtered list only *updates* once the user pauses. `SearchPanel` still re-renders, and `.filter()` still runs, on every keystroke, that part is unavoidable, since the input needs `query` to update immediately for the text box to feel responsive. What debouncing prevents is the *visible* result changing on every keystroke: `debouncedQuery` stays the same across those in-between renders, so `.filter()` keeps returning the same list until the user pauses for 300ms, at which point it runs once more against the new value. This is what actually matters in Part 3, where the filter is replaced by a network request: renders are cheap, but a request fired on every keystroke is not.
+Notice that the `useMemo` dependency also changed, from `query` to `debouncedQuery`. This is the change that actually does the work. `SearchPanel` still re-renders on every keystroke, that part is unavoidable, since the input needs `query` to update immediately for the text box to feel responsive. But `useMemo` only recomputes `results` when its dependency changes, and `debouncedQuery` now stays the same across those in-between renders. So the expensive filter no longer runs on every character, it runs once, when the user pauses for 300ms. Debouncing on its own only controls when `debouncedQuery` catches up; it is pairing it with `useMemo` that turns that pause into skipped work rather than just a frozen display value. Keeping the dependency as `query` here would have re-run the filter on every keystroke regardless of how `debouncedQuery` behaved, memoization only pays off when it is keyed to the value that changes slowly. This is what matters even more in Part 3, where the filter is replaced by a network request: a skipped recomputation there is a skipped HTTP call, not just skipped CPU time.
 
 ### The Problem with Writing This Inline
 
@@ -581,8 +609,12 @@ function SearchPanel() {
     return () => clearTimeout(timer);
   }, [query]);
 
-  const results = CONTACTS.filter((name) =>
-    name.toLowerCase().includes(debouncedQuery.toLowerCase()),
+  const results = useMemo(
+    () =>
+      CONTACTS.filter((name) =>
+        name.toLowerCase().includes(debouncedQuery.toLowerCase()),
+      ),
+    [debouncedQuery],
   );
   // ...
 }
@@ -595,8 +627,12 @@ function SearchPanel() {
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebounce(query);
 
-  const results = CONTACTS.filter((name) =>
-    name.toLowerCase().includes(debouncedQuery.toLowerCase()),
+  const results = useMemo(
+    () =>
+      CONTACTS.filter((name) =>
+        name.toLowerCase().includes(debouncedQuery.toLowerCase()),
+      ),
+    [debouncedQuery],
   );
   // ...
 }
@@ -604,7 +640,7 @@ function SearchPanel() {
 
 You can also remove `useEffect` from the React import line if it is no longer used elsewhere in `App.jsx`.
 
-The component now reads as a clear statement of intent: "I have a query. Its debounced version is derived by the hook. I filter contacts by the debounced version."
+The component now reads as a clear statement of intent: "I have a query. Its debounced version is derived by the hook. I filter contacts by the debounced version, and `useMemo` skips that work entirely on the renders in between."
 
 > **Each caller gets its own state**
 >
@@ -641,7 +677,8 @@ const TAGS = [
 1. Copy the structure of `SearchPanel`, the tag panel is nearly identical
 2. Call `useDebounce(query)` the same way; the hook works for any string value
 3. Filter `TAGS` with `.toLowerCase().includes(...)` the same way contacts are filtered
-4. Add `<TagSearchPanel />` to the `.panels` div in `AppContent`
+4. Wrap the filter in `useMemo`, keyed on `debouncedQuery`, the same way `SearchPanel` does
+5. Add `<TagSearchPanel />` to the `.panels` div in `AppContent`
 
 <details>
 <summary>Reference solution</summary>
@@ -661,8 +698,12 @@ function TagSearchPanel() {
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebounce(query);
 
-  const results = TAGS.filter((tag) =>
-    tag.toLowerCase().includes(debouncedQuery.toLowerCase()),
+  const results = useMemo(
+    () =>
+      TAGS.filter((tag) =>
+        tag.toLowerCase().includes(debouncedQuery.toLowerCase()),
+      ),
+    [debouncedQuery],
   );
 
   return (
@@ -1035,6 +1076,36 @@ function TagSearchPanel() {
 }
 // Typing in one panel does not affect the other
 ```
+
+**Debouncing a value without memoizing the work that depends on it**
+
+```jsx
+// Wrong — debouncedQuery changes slowly, but this still recomputes on
+// every render, because it is not memoized at all
+function SearchPanel() {
+  const [query, setQuery] = useState("");
+  const debouncedQuery = useDebounce(query);
+  const results = CONTACTS.filter((name) =>
+    name.toLowerCase().includes(debouncedQuery.toLowerCase()),
+  );
+}
+
+// Correct — useMemo, keyed on debouncedQuery, is what actually skips
+// the recomputation on the renders where debouncedQuery has not changed
+function SearchPanel() {
+  const [query, setQuery] = useState("");
+  const debouncedQuery = useDebounce(query);
+  const results = useMemo(
+    () =>
+      CONTACTS.filter((name) =>
+        name.toLowerCase().includes(debouncedQuery.toLowerCase()),
+      ),
+    [debouncedQuery],
+  );
+}
+```
+
+`useDebounce` only controls when `debouncedQuery` changes, it does not stop a component body from re-running on every render. Without `useMemo`, `results` is still recomputed on every keystroke, `debouncedQuery` is just holding still, so the recomputation happens to produce the same answer each time. Debouncing reduces computation only when something downstream is memoized against the debounced value; on its own, it only smooths out what value is being computed with.
 
 **Calling a hook conditionally**
 
